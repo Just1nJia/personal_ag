@@ -615,3 +615,107 @@ class FileOperationManager:
                 error=error_msg
             )
             return {"success": False, "message": f"合并文件失败: {error_msg}"}
+        
+    async def clean_file(self, filepath: str, rules: Dict, command_text: str = None) -> Dict:
+        """清洗文件（基础清洗）"""
+        start_time = datetime.now()
+        from tools.file_cleaner import file_cleaner
+        
+        try:
+            result = file_cleaner.clean_file(filepath=filepath, rules=rules)
+            
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            
+            if result.get("success"):
+                file_logger.log_operation(
+                    operation="clean_file",
+                    success=True,
+                    details={
+                        "filepath": result.get("filepath", filepath),
+                        "original_length": result.get("original_length", 0),
+                        "new_length": result.get("new_length", 0),
+                        "original_lines": result.get("original_lines", 0),
+                        "new_lines": result.get("new_lines", 0),
+                        "rules": rules,
+                        "duration_ms": round(duration_ms, 2)
+                    },
+                    command_text=command_text
+                )
+            else:
+                file_logger.log_operation(
+                    operation="clean_file",
+                    success=False,
+                    details={"filepath": filepath, "rules": rules, "duration_ms": round(duration_ms, 2)},
+                    error=result.get("message", "清洗失败"),
+                    command_text=command_text
+                )
+            
+            return result
+        except Exception as e:
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            file_logger.log_operation(
+                operation="clean_file",
+                success=False,
+                details={"filepath": filepath, "duration_ms": round(duration_ms, 2)},
+                error=str(e),
+                command_text=command_text
+            )
+            return {"success": False, "message": f"清洗失败: {str(e)}"}
+
+    async def ai_clean_file(self, filepath: str, instruction: str, command_text: str = None) -> Dict:
+        """AI 智能清洗文件"""
+        start_time = datetime.now()
+        from tools.file_cleaner import file_cleaner
+        
+        try:
+            result = await file_cleaner.ai_clean_file(filepath=filepath, instruction=instruction)
+            
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            
+            if result.get("success"):
+                file_logger.log_operation(
+                    operation="ai_clean_file",
+                    success=True,
+                    details={
+                        "filepath": result.get("filepath", filepath),
+                        "original_length": result.get("original_length", 0),
+                        "new_length": result.get("new_length", 0),
+                        "instruction": instruction[:200] + "..." if len(instruction) > 200 else instruction,
+                        "duration_ms": round(duration_ms, 2)
+                    },
+                    command_text=command_text
+                )
+                
+                if result.get("target_filename"):
+                    file_logger.log_operation(
+                        operation="ai_clean_file_with_rename",
+                        success=True,
+                        details={
+                            "source_file": filepath,
+                            "target_file": result.get("filepath", ""),
+                            "original_length": result.get("original_length", 0),
+                            "new_length": result.get("new_length", 0),
+                            "duration_ms": round(duration_ms, 2)
+                        },
+                        command_text=command_text
+                    )
+            else:
+                file_logger.log_operation(
+                    operation="ai_clean_file",
+                    success=False,
+                    details={"filepath": filepath, "duration_ms": round(duration_ms, 2)},
+                    error=result.get("message", "AI清洗失败"),
+                    command_text=command_text
+                )
+            
+            return result
+        except Exception as e:
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            file_logger.log_operation(
+                operation="ai_clean_file",
+                success=False,
+                details={"filepath": filepath, "duration_ms": round(duration_ms, 2)},
+                error=str(e),
+                command_text=command_text
+            )
+            return {"success": False, "message": f"AI清洗失败: {str(e)}"}

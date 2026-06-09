@@ -14,6 +14,7 @@ from tools.web_scraper import scraper
 from email_module.sender import send_email
 from tools.scraper_logger import scraper_logger
 from tools.content_processor import process_content
+from tools.smart_searcher import smart_searcher
 
 # 定时任务存储文件
 SCHEDULE_FILE = Path("C:/Users/hp/Desktop/upload/scrape/schedules.json")
@@ -89,6 +90,17 @@ async def scrape_single_url(
     result = await scraper.scrape_article(url)
     
     if not result["success"]:
+        # 记录失败日志
+        scraper_logger.log_scrape(
+            urls=[url],
+            output_format=output_format,
+            send_to_email=send_to_email,
+            schedule_type="once",
+            success=False,
+            error=result.get("message", "爬取失败"),
+            need_process=need_process,
+            process_requirement=process_requirement
+        )
         return {
             "success": False,
             "url": url,
@@ -98,6 +110,7 @@ async def scrape_single_url(
     # 获取原始内容
     original_content = result.get("content", "")
     processed_content = None
+    process_result = None
     
     # 如果启用整理
     if need_process and process_requirement:
@@ -154,6 +167,32 @@ async def scrape_single_url(
         except Exception as e:
             print(f"[Scraper] 邮件发送失败: {e}")
     
+    # 记录成功日志（包含整理信息）
+    result_data = {
+        "title": result.get("title", ""),
+        "content_length": len(processed_content) if processed_content else result.get("content_length", 0),
+        "links_count": result.get("links_count", 0),
+        "saved_to": str(filepath),
+        "email_sent": email_sent,
+        "email_to": send_to_email
+    }
+    
+    # 如果有整理结果，添加整理信息
+    if process_result and process_result.get("success"):
+        result_data["original_length"] = process_result.get("original_length", 0)
+        result_data["processed_length"] = process_result.get("processed_length", 0)
+    
+    scraper_logger.log_scrape(
+        urls=[url],
+        output_format=output_format,
+        send_to_email=send_to_email,
+        schedule_type="once",
+        success=True,
+        result=result_data,
+        need_process=need_process,
+        process_requirement=process_requirement
+    )
+    
     return {
         "success": True,
         "url": url,
@@ -165,7 +204,10 @@ async def scrape_single_url(
         "filename": filename,
         "download_url": f"/api/download/scrape/{filename}",
         "email_sent": email_sent,
-        "email_to": send_to_email
+        "email_to": send_to_email,
+        "need_process": need_process,
+        "process_requirement": process_requirement,
+        "processed": process_result.get("success") if process_result else False
     }
 
 
@@ -179,27 +221,10 @@ async def scrape_multiple_urls(
     """爬取多个URL，可选内容整理"""
     results = []
     all_output = ""
-    processed_contents = []
     
     for i, url in enumerate(urls, 1):
         result = await scrape_single_url(url, output_format, None, need_process, process_requirement)
         results.append(result)
-        
-        # 收集整理后的内容用于批量整理
-        if need_process and process_requirement:
-            # 读取保存的文件内容
-            if result.get("saved_to"):
-                try:
-                    with open(result["saved_to"], 'r', encoding='utf-8') as f:
-                        file_content = f.read()
-                        processed_contents.append({
-                            "title": result.get("title", ""),
-                            "url": url,
-                            "content": file_content
-                        })
-                except:
-                    pass
-        
         all_output += f"\n{'='*60}\n【{i}】{url}\n{'='*60}\n\n"
         if result["success"]:
             all_output += result["output_preview"] if "output_preview" in result else "内容已保存"
@@ -230,6 +255,25 @@ async def scrape_multiple_urls(
         )
         print(f"[Scraper] 批量邮件发送结果: {email_sent} 目标: {send_to_email}")
     
+    # 记录批量日志
+    scraper_logger.log_scrape(
+        urls=urls,
+        output_format=output_format,
+        send_to_email=send_to_email,
+        schedule_type="once",
+        success=True,
+        result={
+            "title": f"批量爬取 {len(urls)} 个网址",
+            "content_length": len(all_output),
+            "links_count": 0,
+            "saved_to": str(filepath),
+            "email_sent": email_sent,
+            "email_to": send_to_email
+        },
+        need_process=need_process,
+        process_requirement=process_requirement
+    )
+    
     return {
         "success": True,
         "message": f"批量爬取完成，共 {len(urls)} 个网址",
@@ -243,6 +287,112 @@ async def scrape_multiple_urls(
         "email_to": send_to_email
     }
 
+async def search_and_scrape(
+    query: str,
+    output_format: str,
+    send_to_email: Optional[str] = None,
+    need_process: bool = False,
+    process_requirement: str = "",
+    max_urls: int = 3
+) -> Dict:
+    """
+    根据需求搜索并抓取相关内容
+    """
+    # 1. 搜索相关网址
+    print(f"[SmartSearch] 正在搜索: {query}")
+    search_results = await smart_searcher.search_urls(query, max_results=max_urls * 2)
+    
+    if not search_results:
+        return {
+            "success": False,
+            "message": f"未找到与 '{query}' 相关的网址",
+            "urls": []
+        }
+    
+    # 2. 过滤出有效的网址
+    valid_urls = []
+    for r in search_results:
+        url = r.get("url", "")
+        if url and url.startswith(("http://", "https://")):
+            valid_urls.append({
+                "url": url,
+                "title": r.get("title", ""),
+                "snippet": r.get("snippet", "")
+            })
+    
+    # 3. 取前 max_urls 个网址进行抓取
+    target_urls = valid_urls[:max_urls]
+    
+    # 4. 抓取每个网址的内容
+    results = []
+    all_output = ""
+    
+    for i, item in enumerate(target_urls, 1):
+        url = item["url"]
+        title = item["title"]
+        print(f"[SmartSearch] 抓取 ({i}/{len(target_urls)}): {title}")
+        
+        result = await scrape_single_url(
+            url=url,
+            output_format=output_format,
+            send_to_email=None,
+            need_process=need_process,
+            process_requirement=process_requirement
+        )
+        
+        results.append({
+            "url": url,
+            "title": title,
+            "success": result.get("success", False),
+            "output_preview": result.get("output_preview", ""),
+            "error": result.get("error", "")
+        })
+        
+        all_output += f"\n{'='*60}\n【{i}】{title}\n{url}\n{'='*60}\n\n"
+        if result.get("success"):
+            all_output += result.get("output_preview", "内容已保存")
+        else:
+            all_output += f"抓取失败: {result.get('error', '未知错误')}\n"
+    
+    # 5. 保存合并文件
+    save_dir = Path("C:/Users/hp/Desktop/upload/scrape")
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ext = "txt" if output_format == "txt" else "md"
+    filename = f"smart_search_{timestamp}.{ext}"
+    filepath = save_dir / filename
+    filepath.write_text(all_output, encoding="utf-8")
+    
+    # 6. 发送邮件
+    email_sent = False
+    if send_to_email:
+        subject = f"🔍 智能搜索: {query[:50]}"
+        if need_process:
+            subject = f"🤖 [整理] {subject}"
+        email_sent = send_email(
+            to=send_to_email,
+            subject=subject,
+            body=all_output[:5000],
+            attachments=[str(filepath)]
+        )
+    
+    return {
+        "success": True,
+        "message": f"智能搜索完成，共抓取 {len(target_urls)} 个网址",
+        "query": query,
+        "urls_found": len(valid_urls),
+        "urls_scraped": len(target_urls),
+        "search_results": [
+            {"title": r["title"], "url": r["url"], "snippet": r["snippet"]}
+            for r in search_results[:10]
+        ],
+        "scrape_results": results,
+        "saved_to": str(filepath),
+        "download_url": f"/api/download/scrape/{filename}",
+        "email_sent": email_sent,
+        "email_to": send_to_email
+    }
 
 async def execute_scrape_task(
     urls_input: str,

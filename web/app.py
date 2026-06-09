@@ -22,6 +22,7 @@ from web.command_parser import CommandParser
 from web.models import FileCreate, FileUpdate, CommandRequest
 from web.file_logger import file_logger
 from tools.scraper_handler import execute_scrape_task, add_scheduled_task, get_scheduled_tasks, remove_scheduled_task
+from tools.file_cleaner import file_cleaner  # 从外部模块导入
 from pydantic import BaseModel
 from fastapi.responses import FileResponse
 from tools.scraper_logger import scraper_logger
@@ -52,14 +53,18 @@ file_manager = FileOperationManager(upload_dir=str(FILE_REPO))
 command_parser = CommandParser()
 
 class ScrapeRequest(BaseModel):
-    url: str
+    url: Optional[str] = None
+    smart_query: Optional[str] = None
+    smart_mode: bool = False
     format: str = "markdown"
     email: Optional[str] = None
     need_process: bool = False
     process_requirement: Optional[str] = None
 
 class ScrapeScheduleRequest(BaseModel):
-    urls: str
+    urls: Optional[str] = None
+    smart_query: Optional[str] = None
+    smart_mode: bool = False
     format: str = "markdown"
     email: Optional[str] = None
     schedule_type: str = "daily"
@@ -87,23 +92,43 @@ async def api_scrape(request: ScrapeRequest):
         output_format=request.format,
         send_to_email=request.email,
         need_process=request.need_process,
-        process_requirement=request.process_requirement
+        process_requirement=request.process_requirement,
+        smart_mode=request.smart_mode,
+        smart_query=request.smart_query
     )
     return result
 
 @app.post("/api/scrape/schedule")
 async def api_scrape_schedule(request: ScrapeScheduleRequest):
     """添加定时爬取任务"""
-    result = add_scheduled_task(
-        urls=request.urls,
-        schedule_type=request.schedule_type,
-        schedule_detail=request.schedule_detail,
-        schedule_time=request.schedule_time,
-        email=request.email,
-        format_type=request.format,
-        need_process=request.need_process,
-        process_requirement=request.process_requirement
-    )
+    
+    # 智能搜索模式
+    if request.smart_mode and request.smart_query:
+        result = add_scheduled_task(
+            urls=None,
+            schedule_type=request.schedule_type,
+            schedule_detail=request.schedule_detail,
+            schedule_time=request.schedule_time,
+            email=request.email,
+            format_type=request.format,
+            need_process=request.need_process,
+            process_requirement=request.process_requirement,
+            smart_query=request.smart_query,
+            smart_mode=True
+        )
+    else:
+        # 普通网址模式
+        result = add_scheduled_task(
+            urls=request.urls,  # ← 检查这个值是否正确传递
+            schedule_type=request.schedule_type,
+            schedule_detail=request.schedule_detail,
+            schedule_time=request.schedule_time,
+            email=request.email,
+            format_type=request.format,
+            need_process=request.need_process,
+            process_requirement=request.process_requirement,
+            smart_mode=False
+        )
     
     if result["success"]:
         return {
@@ -1073,432 +1098,6 @@ def _find_snippet(text: str, query: str, length: int = 150) -> str:
     start = max(0, idx - 30)
     return ("..." if start > 0 else "") + text[start:start + length] + "..."
 
-# ── 文件清洗工具 ──────────────────────────────────────────────────────────
-
-class FileCleaner:
-    def __init__(self):
-        self.base_dir = FILE_REPO
-    
-    def list_available_files(self) -> List[str]:
-        """列出所有可清洗的文件"""
-        files = []
-        for ext in ['*.txt', '*.md', '*.csv', '*.json', '*.xml']:
-            files.extend(self.base_dir.rglob(ext))
-        files = [f for f in files if f.is_file()]
-        return [str(f.relative_to(self.base_dir)) for f in files]
-    
-    def clean_file(self, filepath: str, rules: Dict) -> Dict:
-        """清洗文件"""
-        full_path = self.base_dir / filepath
-        
-        if not full_path.exists():
-            return {"success": False, "message": f"文件不存在: {filepath}"}
-        
-        try:
-            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-            original_length = len(content)
-            lines = content.splitlines()
-            
-            # 1. 去除每行首尾空白
-            if rules.get("strip_lines", False):
-                lines = [line.strip() for line in lines]
-            
-            # 2. 删除空行
-            if rules.get("remove_empty_lines", False):
-                lines = [line for line in lines if line]
-            
-            # 3. 删除重复行
-            if rules.get("remove_duplicate_lines", False):
-                seen = set()
-                unique_lines = []
-                for line in lines:
-                    if line not in seen:
-                        seen.add(line)
-                        unique_lines.append(line)
-                lines = unique_lines
-            
-            # 4. 删除特殊字符
-            if rules.get("remove_special_chars", False):
-                cleaned_lines = []
-                for line in lines:
-                    cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s\.\,\!\?\;:\"\'\(\)\【\】\《\》\、\。\，\！\？\；\：\“\”\n]', '', line)
-                    cleaned_lines.append(cleaned)
-                lines = cleaned_lines
-            
-            # 5. 自定义替换
-            custom_replace = rules.get("custom_replace", [])
-            for cr in custom_replace:
-                from_text = cr.get("from", "")
-                to_text = cr.get("to", "")
-                if from_text:
-                    lines = [line.replace(from_text, to_text) for line in lines]
-            
-            new_content = '\n'.join(lines)
-            
-            output_path = full_path
-            if rules.get("save_as_new", False):
-                stem = full_path.stem
-                suffix = full_path.suffix
-                output_path = full_path.parent / f"{stem}_cleaned{suffix}"
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            
-            return {
-                "success": True,
-                "message": f"文件清洗完成",
-                "filepath": str(output_path.relative_to(self.base_dir)),
-                "original_length": original_length,
-                "new_length": len(new_content),
-                "original_lines": len(content.splitlines()),
-                "new_lines": len(lines)
-            }
-        except Exception as e:
-            return {"success": False, "message": f"清洗失败: {str(e)}"}
-
-    async def ai_clean_file(self, filepath: str, instruction: str) -> Dict:
-        """使用 AI 智能清洗文件内容，支持重命名"""
-        full_path = self.base_dir / filepath
-        
-        if not full_path.exists():
-            return {"success": False, "message": f"文件不存在: {filepath}"}
-        
-        try:
-            # 读取文件内容
-            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-            if not content.strip():
-                return {"success": False, "message": "文件内容为空"}
-            
-            # 限制内容长度
-            max_chars = 8000
-            if len(content) > max_chars:
-                content = content[:max_chars] + "\n\n...(内容过长，已截取前8000字符)"
-            
-            # 调用 AI 处理内容
-            from ai import client as ai_client
-            
-            # 1. 先让 AI 解析指令，提取目标文件名
-            parse_prompt = f"""从以下指令中提取：
-    1. 要处理的内容要求
-    2. 目标文件名（如果用户指定了新文件名，如“命名为temp2.txt”则提取；否则返回None）
-
-    用户指令：{instruction}
-
-    请输出JSON格式：
-    {{
-        "content_instruction": "要如何处理文件内容",
-        "target_filename": "新文件名.txt（如果用户指定了则填，否则填null）"
-    }}"""
-
-            parse_result = ai_client.chat(
-                messages=[{"role": "user", "content": parse_prompt}],
-                system_prompt="你是指令解析助手，只输出纯JSON。",
-                temperature=0.1,
-            )
-            
-            # 解析JSON
-            parse_result = parse_result.strip()
-            if parse_result.startswith("```json"):
-                parse_result = parse_result[7:]
-            if parse_result.startswith("```"):
-                parse_result = parse_result[3:]
-            if parse_result.endswith("```"):
-                parse_result = parse_result[:-3]
-            parse_result = parse_result.strip()
-            
-            parsed = json.loads(parse_result)
-            content_instruction = parsed.get("content_instruction", instruction)
-            target_filename = parsed.get("target_filename")
-            
-            # 2. 处理内容
-            content_prompt = f"""请根据以下指令处理文本内容：
-
-    指令：{content_instruction}
-
-    原始文本：
-    {content}
-
-    要求：
-    1. 只输出处理后的结果，不要添加任何解释
-    2. 严格按照指令要求处理
-    3. 如果指令要求删除非中文内容，只保留中文"""
-
-            result_content = ai_client.chat(
-                messages=[{"role": "user", "content": content_prompt}],
-                system_prompt="你是文档处理助手，严格按照用户指令处理文本，只输出处理结果，不添加任何额外说明。",
-                temperature=0.3,
-            )
-            
-            # 3. 确定输出文件路径
-            if target_filename:
-                output_filename = target_filename
-            else:
-                stem = full_path.stem
-                suffix = full_path.suffix
-                output_filename = f"{stem}_ai_cleaned{suffix}"
-            
-            output_path = full_path.parent / output_filename
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(result_content)
-            
-            return {
-                "success": True,
-                "message": f"AI智能清洗完成",
-                "filepath": str(output_path.relative_to(self.base_dir)),
-                "original_length": len(content),
-                "new_length": len(result_content),
-                "instruction": instruction,
-                "target_filename": target_filename
-            }
-            
-        except Exception as e:
-            return {"success": False, "message": f"AI清洗失败: {str(e)}"}
-
-# 在 FileCleaner 类后面添加新类
-
-class ExcelFiller:
-    def __init__(self):
-        self.base_dir = FILE_REPO
-        self.info_file = self.base_dir / "personal information.txt"
-    
-    def load_personal_info(self) -> Dict:
-        """加载个人信息文件"""
-        if not self.info_file.exists():
-            return {}
-        
-        content = self.info_file.read_text(encoding='utf-8')
-        info = {}
-        
-        # 解析 key: value 格式
-        for line in content.split('\n'):
-            line = line.strip()
-            if ':' in line:
-                key, value = line.split(':', 1)
-                info[key.strip()] = value.strip()
-            elif '：' in line:
-                key, value = line.split('：', 1)
-                info[key.strip()] = value.strip()
-        
-        return info
-    
-    async def fill_excel_with_ai(self, excel_path: str, instruction: str = "") -> Dict:
-        """使用 AI 智能填写 Excel 表格"""
-        full_path = self.base_dir / excel_path
-        
-        if not full_path.exists():
-            return {"success": False, "message": f"文件不存在: {excel_path}"}
-        
-        try:
-            import pandas as pd
-            from ai import client as ai_client
-            
-            # 1. 加载个人信息
-            personal_info = self.load_personal_info()
-            if not personal_info:
-                return {"success": False, "message": "个人信息文件不存在或为空"}
-            
-            # 2. 读取 Excel 文件
-            df = pd.read_excel(full_path, sheet_name=0)
-            
-            # 3. 用 AI 分析表格结构并匹配信息
-            columns = df.columns.tolist()
-            sample_data = df.head(3).to_string()
-            
-            prompt = f"""请分析以下 Excel 表格的结构，并根据个人信息填写表格。
-
-表格列名：{columns}
-表格示例数据：
-{sample_data}
-
-个人信息：
-{json.dumps(personal_info, ensure_ascii=False, indent=2)}
-
-用户指令：{instruction if instruction else "请将个人信息填写到对应的列中"}
-
-请输出 JSON 格式的填写方案：
-{{
-    "mapping": {{
-        "列名1": "从个人信息中提取的值",
-        "列名2": "从个人信息中提取的值"
-    }},
-    "new_rows": [
-        {{"列名1": "值1", "列名2": "值2"}}
-    ]
-}}
-
-要求：
-1. mapping 用于说明每列应该填什么信息
-2. new_rows 是要新增的行数据
-3. 只输出 JSON，不要添加其他内容"""
-
-            ai_result = ai_client.chat(
-                messages=[{"role": "user", "content": prompt}],
-                system_prompt="你是一个 Excel 填表助手，只输出 JSON。",
-                temperature=0.2,
-            )
-            
-            # 解析 AI 结果
-            ai_result = ai_result.strip()
-            if ai_result.startswith("```json"):
-                ai_result = ai_result[7:]
-            if ai_result.startswith("```"):
-                ai_result = ai_result[3:]
-            if ai_result.endswith("```"):
-                ai_result = ai_result[:-3]
-            
-            fill_plan = json.loads(ai_result)
-            
-            # 4. 创建新行
-            new_row = {}
-            for col, value in fill_plan.get("new_rows", [{}])[0].items():
-                new_row[col] = value
-            
-            # 如果没有匹配到，用 mapping 填充
-            if not new_row:
-                for col in columns:
-                    if col in fill_plan.get("mapping", {}):
-                        new_row[col] = fill_plan["mapping"][col]
-            
-            # 5. 添加新行
-            df.loc[len(df)] = new_row
-            
-            # 6. 保存文件
-            output_path = full_path.parent / f"{full_path.stem}_filled{full_path.suffix}"
-            df.to_excel(output_path, index=False)
-            
-            return {
-                "success": True,
-                "message": f"Excel 填写完成",
-                "filepath": str(output_path.relative_to(self.base_dir)),
-                "filled_row": new_row,
-                "personal_info_used": personal_info
-            }
-            
-        except ImportError:
-            return {"success": False, "message": "请先安装 pandas 和 openpyxl: pip install pandas openpyxl"}
-        except Exception as e:
-            return {"success": False, "message": f"填表失败: {str(e)}"}
-
-excel_filler = ExcelFiller()
-
-file_cleaner = FileCleaner()
-
-async def parse_clean_command_with_ai(text: str) -> Optional[Dict]:
-    """使用大模型解析文件清洗指令"""
-    try:
-        from ai import client as ai_client
-        
-        prompt = f"""请解析以下用户指令，提取出【文件路径】和【操作要求】。
-
-用户指令：{text}
-
-请严格按照以下 JSON 格式输出（不要添加任何其他内容）：
-{{
-    "filepath": "文件名（只包含文件名，不要包含动词，如 temp1.txt）",
-    "instruction": "用户想要对文件执行的操作描述",
-    "is_ai_clean": true
-}}
-
-示例1：
-输入："把 temp1.txt 的所有中文提取出来"
-输出：{{"filepath": "temp1.txt", "instruction": "提取所有中文", "is_ai_clean": true}}
-
-示例2：
-输入："清洗 1234.txt 删除空行"
-输出：{{"filepath": "1234.txt", "instruction": "删除空行", "is_ai_clean": false}}
-
-只输出 JSON，不要有其他内容。"""
-        
-        result = ai_client.chat(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="你是指令解析助手，只输出 JSON。",
-            temperature=0.1,
-        )
-        
-        # 解析 JSON
-        result = result.strip()
-        # 去掉可能的 markdown 代码块标记
-        if result.startswith("```json"):
-            result = result[7:]
-        if result.startswith("```"):
-            result = result[3:]
-        if result.endswith("```"):
-            result = result[:-3]
-        result = result.strip()
-        
-        data = json.loads(result)
-        
-        return {
-            "action": "ai_clean",
-            "filepath": data.get("filepath", ""),
-            "instruction": data.get("instruction", text),
-        }
-    except Exception as e:
-        print(f"AI解析指令失败: {e}")
-        return None
-
-def parse_clean_command(text: str) -> Optional[Dict]:
-    """解析文件清洗指令，支持 AI 智能清洗"""
-    import re
-    
-    # 先用正则快速提取文件名（只匹配 .txt/.md 等结尾的）
-    file_match = re.search(r'([\w\u4e00-\u9fa5]+\.(txt|md|csv|json|xml))', text)
-    if not file_match:
-        return None
-    
-    # 检查是否需要 AI 处理（包含这些关键词）
-    ai_keywords = ["提取", "保留", "删除", "总结", "概括", "翻译", "改写", "润色", "格式化", "处理"]
-    is_ai = any(kw in text for kw in ai_keywords)
-    
-    filepath = file_match.group(1)
-    
-    if is_ai:
-        # 对于复杂指令，返回标记，让上层用 AI 解析
-        return {
-            "action": "need_ai_parse",
-            "filepath": filepath,
-            "instruction": text.strip()
-        }
-    
-    # 基础清洗
-    text_lower = text.lower()
-    rules = {
-        "strip_lines": True,
-        "save_as_new": False
-    }
-    
-    if "空行" in text or "empty" in text_lower:
-        rules["remove_empty_lines"] = True
-    if "重复" in text or "duplicate" in text_lower:
-        rules["remove_duplicate_lines"] = True
-    if "特殊字符" in text or "special" in text_lower:
-        rules["remove_special_chars"] = True
-    if "另存为" in text or "新文件" in text:
-        rules["save_as_new"] = True
-    
-    if not rules.get("remove_empty_lines") and not rules.get("remove_duplicate_lines") and not rules.get("remove_special_chars"):
-        rules["remove_empty_lines"] = True
-        rules["strip_lines"] = True
-    
-    return {
-        "action": "clean",
-        "filepath": filepath,
-        "rules": rules
-    }
-
-@app.get("/api/files/list")
-async def list_files(directory: str = Query("", description="相对路径，空表示根目录")):
-    """列出可清洗的文件"""
-    files = file_cleaner.list_available_files()
-    if directory:
-        files = [f for f in files if f.startswith(directory)]
-    return {"success": True, "files": files[:50], "total": len(files)}
-
 # ── 路由：流式对话 ──────────────────────────────────────────────────────────
 
 async def _execute_file_command(command: str) -> dict:
@@ -1627,7 +1226,8 @@ async def chat_stream(req: ChatRequest):
                         
                         result = await file_cleaner.ai_clean_file(
                             filepath=parsed["filepath"],
-                            instruction=parsed["instruction"]
+                            instruction=parsed["instruction"],
+                            command_text=last_user
                         )
 
                         if result["success"]:
@@ -1674,15 +1274,16 @@ async def chat_stream(req: ChatRequest):
                     return
 
             # ──────────────────────────────────────────────────────────────
-            # 2. 基础清洗操作（不需要 AI 理解内容）
+            # 2. 基础清洗操作
             # ──────────────────────────────────────────────────────────────
             clean_cmd = parse_clean_command(last_user)
             if clean_cmd and clean_cmd.get("action") == "clean":
                 print(f"[DEBUG] 识别为基础清洗操作: {clean_cmd}")
                 try:
-                    result = file_cleaner.clean_file(
+                    result = await file_manager.clean_file(
                         filepath=clean_cmd["filepath"],
-                        rules=clean_cmd["rules"]
+                        rules=clean_cmd["rules"],
+                        command_text=last_user
                     )
                     if result["success"]:
                         output = f"""✅ 文件清洗完成！
@@ -1715,12 +1316,11 @@ async def chat_stream(req: ChatRequest):
                     return
 
             # ──────────────────────────────────────────────────────────────
-            # 0. 优先判断智能填表操作
+            # 3. 智能填表操作
             # ──────────────────────────────────────────────────────────────
             fill_keywords = ["填表", "填写表格", "填写excel", "填入表格", "智能填表"]
             if any(kw in last_user for kw in fill_keywords):
                 print(f"[DEBUG] 识别为智能填表操作")
-                # 提取 Excel 文件名
                 import re
                 excel_match = re.search(r'([\w\u4e00-\u9fa5]+\.(xlsx|xls))', last_user)
                 if excel_match:
@@ -1733,11 +1333,11 @@ async def chat_stream(req: ChatRequest):
                         if result["success"]:
                             output = f"""✅ 智能填表完成！
 
-            **表格文件**: {result['filepath']}
-            **填写的行数据**: {json.dumps(result['filled_row'], ensure_ascii=False, indent=2)}
-            **使用的个人信息**: {json.dumps(result['personal_info_used'], ensure_ascii=False, indent=2)}
+**表格文件**: {result['filepath']}
+**填写的行数据**: {json.dumps(result['filled_row'], ensure_ascii=False, indent=2)}
+**使用的个人信息**: {json.dumps(result['personal_info_used'], ensure_ascii=False, indent=2)}
 
-            新文件已保存为: {result['filepath']}"""
+新文件已保存为: {result['filepath']}"""
                         else:
                             output = f"❌ 填表失败: {result['message']}"
                         
@@ -1762,7 +1362,7 @@ async def chat_stream(req: ChatRequest):
                     return
 
             # ──────────────────────────────────────────────────────────────
-            # 3. 脚本操作
+            # 4. 脚本操作
             # ──────────────────────────────────────────────────────────────
             low = last_user.lower()
             is_script = any(kw in low for kw in ["运行", "执行", "run", "列出脚本", "有哪些脚本", "脚本列表"])
@@ -1791,7 +1391,7 @@ async def chat_stream(req: ChatRequest):
                     return
 
             # ──────────────────────────────────────────────────────────────
-            # 4. 邮件/文件操作
+            # 5. 邮件/文件操作
             # ──────────────────────────────────────────────────────────────
             is_email = any(kw in low for kw in ["发邮件", "发送邮件", "回复邮件", "发给", "发到", "邮件给"])
             is_file = any(kw in low for kw in ["创建", "新建", "读取", "查看", "修改", "更新", 
@@ -1825,7 +1425,7 @@ async def chat_stream(req: ChatRequest):
                     yield f"data: {json.dumps({'text': err_msg}, ensure_ascii=False)}\n\n"
 
             # ──────────────────────────────────────────────────────────────
-            # 5. 普通对话：流式 AI 回复
+            # 6. 普通对话：流式 AI 回复
             # ──────────────────────────────────────────────────────────────
             system_prompt = _build_chat_system_prompt() if req.inject_memory else "你是Aegis，一个智能AI助理。"
             messages = [{"role": m.role, "content": m.content} for m in req.messages]
@@ -1862,118 +1462,113 @@ async def chat_stream(req: ChatRequest):
         },
     )
 
-@app.post("/api/chat")
-async def chat_simple(req: ChatRequest):
-    """非流式对话"""
-    import ai.client as ai_client
-    system_prompt = _build_chat_system_prompt() if req.inject_memory else "你是Aegis。"
-    messages = [{"role": m.role, "content": m.content} for m in req.messages]
-    result = ai_client.chat(messages, system_prompt=system_prompt)
-    return {"content": result}
+# ── 新增大模型解析函数 ──────────────────────────────────────────────────────
 
-# ── 路由：任务触发 ──────────────────────────────────────────────────────────
+async def parse_clean_command_with_ai(text: str) -> Optional[Dict]:
+    """使用大模型解析文件清洗指令"""
+    try:
+        from ai import client as ai_client
+        
+        prompt = f"""请解析以下用户指令，提取出【文件路径】和【操作要求】。
 
-@app.post("/api/tasks/{task_name}/run")
-async def run_task(task_name: str):
-    allowed = {
-        "briefing", "focus_update", "check_emails",
-        "build_email_memory", "build_wechat_memory",
+用户指令：{text}
+
+请严格按照以下 JSON 格式输出（不要添加任何其他内容）：
+{{
+    "filepath": "文件名（只包含文件名，不要包含动词，如 temp1.txt）",
+    "instruction": "用户想要对文件执行的操作描述",
+    "is_ai_clean": true
+}}
+
+示例1：
+输入："把 temp1.txt 的所有中文提取出来"
+输出：{{"filepath": "temp1.txt", "instruction": "提取所有中文", "is_ai_clean": true}}
+
+示例2：
+输入："清洗 1234.txt 删除空行"
+输出：{{"filepath": "1234.txt", "instruction": "删除空行", "is_ai_clean": false}}
+
+只输出 JSON，不要有其他内容。"""
+        
+        result = ai_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="你是指令解析助手，只输出 JSON。",
+            temperature=0.1,
+        )
+        
+        # 解析 JSON
+        result = result.strip()
+        if result.startswith("```json"):
+            result = result[7:]
+        if result.startswith("```"):
+            result = result[3:]
+        if result.endswith("```"):
+            result = result[:-3]
+        result = result.strip()
+        
+        data = json.loads(result)
+        
+        return {
+            "action": "ai_clean",
+            "filepath": data.get("filepath", ""),
+            "instruction": data.get("instruction", text),
+        }
+    except Exception as e:
+        print(f"AI解析指令失败: {e}")
+        return None
+
+def parse_clean_command(text: str) -> Optional[Dict]:
+    """解析文件清洗指令，支持 AI 智能清洗"""
+    import re
+    
+    file_match = re.search(r'([\w\u4e00-\u9fa5]+\.(txt|md|csv|json|xml))', text)
+    if not file_match:
+        return None
+    
+    ai_keywords = ["提取", "保留", "删除", "总结", "概括", "翻译", "改写", "润色", "格式化", "处理"]
+    is_ai = any(kw in text for kw in ai_keywords)
+    
+    filepath = file_match.group(1)
+    
+    if is_ai:
+        return {
+            "action": "need_ai_parse",
+            "filepath": filepath,
+            "instruction": text.strip()
+        }
+    
+    text_lower = text.lower()
+    rules = {
+        "strip_lines": True,
+        "save_as_new": False
     }
-    if task_name not in allowed:
-        raise HTTPException(400, f"未知任务: {task_name}，支持: {', '.join(allowed)}")
+    
+    if "空行" in text or "empty" in text_lower:
+        rules["remove_empty_lines"] = True
+    if "重复" in text or "duplicate" in text_lower:
+        rules["remove_duplicate_lines"] = True
+    if "特殊字符" in text or "special" in text_lower:
+        rules["remove_special_chars"] = True
+    if "另存为" in text or "新文件" in text:
+        rules["save_as_new"] = True
+    
+    if not rules.get("remove_empty_lines") and not rules.get("remove_duplicate_lines") and not rules.get("remove_special_chars"):
+        rules["remove_empty_lines"] = True
+        rules["strip_lines"] = True
+    
+    return {
+        "action": "clean",
+        "filepath": filepath,
+        "rules": rules
+    }
 
-    import threading
-
-    def _run():
-        main_db.init_db()
-        if task_name == "briefing":
-            from scheduler.jobs import send_daily_briefing
-            send_daily_briefing()
-        elif task_name == "focus_update":
-            from scheduler.focus_updater import run_focus_update
-            run_focus_update(send_email=False)
-        elif task_name == "check_emails":
-            from scheduler.jobs import check_emails
-            check_emails()
-        elif task_name == "build_email_memory":
-            from scanner.email_memory_builder import build_email_memory
-            build_email_memory()
-        elif task_name == "build_wechat_memory":
-            from scanner.wechat_memory_builder import build_wechat_memory
-            build_wechat_memory(top_contacts=100, top_groups=100)
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    return {"ok": True, "task": task_name, "status": "started"}
-
-# ── 设置 API ────────────────────────────────────────────────────────────────
-
-def _mask_sensitive(s: dict) -> dict:
-    import copy, json
-    d = json.loads(json.dumps(s, ensure_ascii=False))
-    _SENSITIVE = [
-        ("api", "volc_api_key"),
-        ("email_163", "auth_code"),
-        ("email_gmail", "app_password"),
-    ]
-    for section, field in _SENSITIVE:
-        if d.get(section, {}).get(field):
-            d[section][field] = ""
-    return d
-
-@app.get("/api/settings")
-async def get_settings():
-    from settings_manager import load
-    s = load()
-    return _mask_sensitive(s)
-
-@app.post("/api/settings")
-async def save_settings(request: Request):
-    from settings_manager import save
-    body = await request.json()
-    save(body)
-    from settings_manager import load
-    merged = load()
-    if "scan" in merged and "roots" in merged["scan"]:
-        config.SCAN_ROOTS = merged["scan"]["roots"]
-    return {"ok": True}
-
-@app.post("/api/settings/scan-roots")
-async def add_scan_root(request: Request):
-    body = await request.json()
-    path = body.get("path", "").strip()
-    if not path:
-        raise HTTPException(400, "path 不能为空")
-    from settings_manager import load, save
-    s = load()
-    roots = s.setdefault("scan", {}).setdefault("roots", [])
-    if path not in roots:
-        roots.append(path)
-        save(s)
-        config.SCAN_ROOTS = roots
-    return s
-
-@app.delete("/api/settings/scan-roots")
-async def remove_scan_root(request: Request):
-    body = await request.json()
-    path = body.get("path", "").strip()
-    from settings_manager import load, save
-    s = load()
-    roots = s.setdefault("scan", {}).setdefault("roots", [])
-    if path in roots:
-        roots.remove(path)
-        save(s)
-        config.SCAN_ROOTS = roots
-    return s
-
-@app.get("/api/files/logs")
-async def get_file_logs(limit: int = Query(50, le=200), operation: str = Query(None)):
-    """获取文件操作日志"""
-    if operation:
-        logs = file_logger.get_logs_by_operation(operation, limit)
-    else:
-        logs = file_logger.get_recent_logs(limit)
-    return {"logs": logs, "total": len(logs)}
+@app.get("/api/files/list")
+async def list_files(directory: str = Query("", description="相对路径，空表示根目录")):
+    """列出可清洗的文件"""
+    files = file_cleaner.list_available_files()
+    if directory:
+        files = [f for f in files if f.startswith(directory)]
+    return {"success": True, "files": files[:50], "total": len(files)}
 
 # ── 启动入口 ────────────────────────────────────────────────────────────────
 

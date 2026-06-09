@@ -19,18 +19,13 @@ class ScraperLogger:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
-        # 日志文件路径
         self.json_log_path = self.log_dir / "scraper_operations.json"
         self.text_log_path = self.log_dir / "scraper_operations.log"
         
-        # 获取本机IP
         self.local_ip = self._get_local_ip()
-        
-        # 设置 Python logging
         self._setup_logging()
     
     def _get_local_ip(self) -> str:
-        """获取本机IP地址"""
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
@@ -41,7 +36,6 @@ class ScraperLogger:
             return "127.0.0.1"
     
     def _setup_logging(self):
-        """设置文本日志"""
         self.logger = logging.getLogger("ScraperOperation")
         self.logger.setLevel(logging.INFO)
         
@@ -56,7 +50,6 @@ class ScraperLogger:
             self.logger.addHandler(file_handler)
     
     def _load_existing_logs(self) -> list:
-        """加载现有的 JSON 日志"""
         if self.json_log_path.exists():
             try:
                 with open(self.json_log_path, 'r', encoding='utf-8') as f:
@@ -66,7 +59,6 @@ class ScraperLogger:
         return []
     
     def _save_json_logs(self, logs: list):
-        """保存 JSON 日志"""
         with open(self.json_log_path, 'w', encoding='utf-8') as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
     
@@ -82,22 +74,29 @@ class ScraperLogger:
         result: Dict = None,
         error: str = None,
         need_process: bool = False,
-        process_requirement: str = None
+        process_requirement: str = None,
+        is_smart: bool = False,
+        smart_query: str = None
     ):
         """
         记录爬取操作日志
         """
-        # 构建日志条目
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "ip": self.local_ip,
+            "mode": "smart_search" if is_smart else "url_input",
             "urls": urls,
             "output_format": output_format,
             "send_to_email": send_to_email if send_to_email else "none",
             "schedule_type": schedule_type,
             "success": success,
-            "need_process": need_process,  # 是否启用整理
+            "need_process": need_process,
         }
+        
+        # 记录智能搜索的需求
+        if is_smart and smart_query:
+            log_entry["smart_query"] = smart_query
+            log_entry["smart_query_preview"] = smart_query[:100] + "..." if len(smart_query) > 100 else smart_query
         
         # 记录整理要求
         if need_process and process_requirement:
@@ -129,7 +128,6 @@ class ScraperLogger:
                 "email_sent_time": datetime.now().isoformat() if result.get("email_sent") else None
             }
             
-            # 如果整理成功，记录整理前后的长度
             if need_process and result.get("processed_length"):
                 log_entry["result"]["original_length"] = result.get("original_length", 0)
                 log_entry["result"]["processed_length"] = result.get("processed_length", 0)
@@ -137,13 +135,18 @@ class ScraperLogger:
         elif error:
             log_entry["error"] = error
         
-        # 1. 写入文本日志
+        # 写入文本日志
         status = "✅ 成功" if success else "❌ 失败"
+        mode_text = "🔍 智能搜索" if is_smart else "📎 网址输入"
         urls_str = ", ".join(urls) if len(urls) <= 3 else f"{len(urls)}个网址"
         
-        msg = f"{status} | IP: {self.local_ip} | 网址: {urls_str} | 格式: {output_format} | 邮箱: {send_to_email or 'none'}"
+        msg = f"{status} | {mode_text} | IP: {self.local_ip} | 目标: {urls_str} | 格式: {output_format} | 邮箱: {send_to_email or 'none'}"
         
-        # 添加整理信息到文本日志
+        # 如果是智能搜索，记录需求
+        if is_smart and smart_query:
+            query_preview = smart_query[:50] + "..." if len(smart_query) > 50 else smart_query
+            msg += f" | 需求: {query_preview}"
+        
         if need_process and process_requirement:
             req_preview = process_requirement[:50] + "..." if len(process_requirement) > 50 else process_requirement
             msg += f" | 🤖 AI整理: {req_preview}"
@@ -156,36 +159,35 @@ class ScraperLogger:
         
         self.logger.info(msg)
         
-        # 2. 写入 JSON 日志
+        # 写入 JSON 日志
         logs = self._load_existing_logs()
         logs.append(log_entry)
         
-        # 只保留最近 500 条记录
         if len(logs) > 500:
             logs = logs[-500:]
         
         self._save_json_logs(logs)
     
     def get_recent_logs(self, limit: int = 50) -> list:
-        """获取最近的日志"""
         logs = self._load_existing_logs()
         return logs[-limit:][::-1]
     
     def get_logs_by_date(self, date: str) -> list:
-        """按日期筛选日志（date 格式：YYYY-MM-DD）"""
         logs = self._load_existing_logs()
         return [log for log in logs if log.get("timestamp", "").startswith(date)]
     
     def get_logs_by_url(self, url_keyword: str) -> list:
-        """按网址关键词筛选日志"""
         logs = self._load_existing_logs()
         return [log for log in logs if any(url_keyword in u for u in log.get("urls", []))]
     
     def get_logs_with_process(self) -> list:
-        """获取启用了 AI 整理的日志"""
         logs = self._load_existing_logs()
         return [log for log in logs if log.get("need_process", False)]
+    
+    def get_logs_by_mode(self, mode: str) -> list:
+        """按模式筛选日志：smart_search 或 url_input"""
+        logs = self._load_existing_logs()
+        return [log for log in logs if log.get("mode") == mode]
 
 
-# 全局实例
 scraper_logger = ScraperLogger()

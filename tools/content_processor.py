@@ -30,9 +30,9 @@ async def process_content(
             "processed_content": content
         }
     
-    # 限制内容长度
-    max_content_length = 8000
-    if len(content) > max_content_length:
+    # 限制内容长度 - 改为 50000 字符
+    max_content_length = 0  # 原来是 8000，改大
+    if max_content_length > 0 and len(content) > max_content_length:
         content = content[:max_content_length] + "\n\n... (内容已截断)"
     
     # 构建提示词

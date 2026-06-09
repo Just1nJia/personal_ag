@@ -16,6 +16,21 @@ pdfplumber>=0.11.0
 openpyxl>=3.1.0
 chardet>=5.2.0
 
+# Excel & Data Processing (新增 - 智能填表功能)
+pandas>=2.0.0
+numpy>=1.24.0
+
+# HTTP Client (已有 httpx，但确保存在)
+httpx>=0.27.0
+
+# XML/HTML parsing (已有 BeautifulSoup，但确保存在)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# 图片处理 (二维码生成等)
+pillow>=10.0.0
+qrcode>=7.4.0
+
 # WeChat integration (Windows only)
 pywxdump>=3.0.0
 wxauto>=3.9.0
@@ -24,5 +39,12 @@ watchdog>=2.1.0
 # Desktop notifications (Windows only)
 winotify>=1.1.0
 
-# Optional: local embeddings (recommended for offline use)
+# 邮件处理 (新增 - 邮件汇总和发送)
+feedparser>=6.0.0
+requests>=2.31.0
+
+# AI & NLP (新增 - 智能清洗和填表)
+tiktoken>=0.5.0
+
+# 可选：本地向量嵌入 (推荐离线使用)
 # sentence-transformers>=2.7.0

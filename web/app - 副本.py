@@ -52,14 +52,18 @@ file_manager = FileOperationManager(upload_dir=str(FILE_REPO))
 command_parser = CommandParser()
 
 class ScrapeRequest(BaseModel):
-    url: str
+    url: Optional[str] = None
+    smart_query: Optional[str] = None
+    smart_mode: bool = False
     format: str = "markdown"
     email: Optional[str] = None
     need_process: bool = False
     process_requirement: Optional[str] = None
 
 class ScrapeScheduleRequest(BaseModel):
-    urls: str
+    urls: Optional[str] = None
+    smart_query: Optional[str] = None
+    smart_mode: bool = False
     format: str = "markdown"
     email: Optional[str] = None
     schedule_type: str = "daily"
@@ -87,13 +91,20 @@ async def api_scrape(request: ScrapeRequest):
         output_format=request.format,
         send_to_email=request.email,
         need_process=request.need_process,
-        process_requirement=request.process_requirement
+        process_requirement=request.process_requirement,
+        smart_mode=request.smart_mode,
+        smart_query=request.smart_query
     )
     return result
 
 @app.post("/api/scrape/schedule")
 async def api_scrape_schedule(request: ScrapeScheduleRequest):
     """添加定时爬取任务"""
+    # 智能搜索模式
+    if request.smart_mode and request.smart_query:
+        # 定时任务暂不支持智能搜索，转为立即执行或返回错误
+        return {"success": False, "message": "定时任务暂不支持智能搜索模式，请使用网址模式"}
+    
     result = add_scheduled_task(
         urls=request.urls,
         schedule_type=request.schedule_type,
@@ -1259,6 +1270,133 @@ class FileCleaner:
         except Exception as e:
             return {"success": False, "message": f"AI清洗失败: {str(e)}"}
 
+# 在 FileCleaner 类后面添加新类
+
+class ExcelFiller:
+    def __init__(self):
+        self.base_dir = FILE_REPO
+        self.info_file = self.base_dir / "personal information.txt"
+    
+    def load_personal_info(self) -> Dict:
+        """加载个人信息文件"""
+        if not self.info_file.exists():
+            return {}
+        
+        content = self.info_file.read_text(encoding='utf-8')
+        info = {}
+        
+        # 解析 key: value 格式
+        for line in content.split('\n'):
+            line = line.strip()
+            if ':' in line:
+                key, value = line.split(':', 1)
+                info[key.strip()] = value.strip()
+            elif '：' in line:
+                key, value = line.split('：', 1)
+                info[key.strip()] = value.strip()
+        
+        return info
+    
+    async def fill_excel_with_ai(self, excel_path: str, instruction: str = "") -> Dict:
+        """使用 AI 智能填写 Excel 表格"""
+        full_path = self.base_dir / excel_path
+        
+        if not full_path.exists():
+            return {"success": False, "message": f"文件不存在: {excel_path}"}
+        
+        try:
+            import pandas as pd
+            from ai import client as ai_client
+            
+            # 1. 加载个人信息
+            personal_info = self.load_personal_info()
+            if not personal_info:
+                return {"success": False, "message": "个人信息文件不存在或为空"}
+            
+            # 2. 读取 Excel 文件
+            df = pd.read_excel(full_path, sheet_name=0)
+            
+            # 3. 用 AI 分析表格结构并匹配信息
+            columns = df.columns.tolist()
+            sample_data = df.head(3).to_string()
+            
+            prompt = f"""请分析以下 Excel 表格的结构，并根据个人信息填写表格。
+
+表格列名：{columns}
+表格示例数据：
+{sample_data}
+
+个人信息：
+{json.dumps(personal_info, ensure_ascii=False, indent=2)}
+
+用户指令：{instruction if instruction else "请将个人信息填写到对应的列中"}
+
+请输出 JSON 格式的填写方案：
+{{
+    "mapping": {{
+        "列名1": "从个人信息中提取的值",
+        "列名2": "从个人信息中提取的值"
+    }},
+    "new_rows": [
+        {{"列名1": "值1", "列名2": "值2"}}
+    ]
+}}
+
+要求：
+1. mapping 用于说明每列应该填什么信息
+2. new_rows 是要新增的行数据
+3. 只输出 JSON，不要添加其他内容"""
+
+            ai_result = ai_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="你是一个 Excel 填表助手，只输出 JSON。",
+                temperature=0.2,
+            )
+            
+            # 解析 AI 结果
+            ai_result = ai_result.strip()
+            if ai_result.startswith("```json"):
+                ai_result = ai_result[7:]
+            if ai_result.startswith("```"):
+                ai_result = ai_result[3:]
+            if ai_result.endswith("```"):
+                ai_result = ai_result[:-3]
+            
+            fill_plan = json.loads(ai_result)
+            
+            # 4. 创建新行
+            new_row = {}
+            for col, value in fill_plan.get("new_rows", [{}])[0].items():
+                new_row[col] = value
+            
+            # 如果没有匹配到，用 mapping 填充
+            if not new_row:
+                for col in columns:
+                    if col in fill_plan.get("mapping", {}):
+                        new_row[col] = fill_plan["mapping"][col]
+            
+            # 5. 添加新行
+            df.loc[len(df)] = new_row
+            
+            # 6. 保存文件
+            output_path = full_path.parent / f"{full_path.stem}_filled{full_path.suffix}"
+            df.to_excel(output_path, index=False)
+            
+            return {
+                "success": True,
+                "message": f"Excel 填写完成",
+                "filepath": str(output_path.relative_to(self.base_dir)),
+                "filled_row": new_row,
+                "personal_info_used": personal_info
+            }
+            
+        except ImportError:
+            return {"success": False, "message": "请先安装 pandas 和 openpyxl: pip install pandas openpyxl"}
+        except Exception as e:
+            return {"success": False, "message": f"填表失败: {str(e)}"}
+
+excel_filler = ExcelFiller()
+
 file_cleaner = FileCleaner()
 
 async def parse_clean_command_with_ai(text: str) -> Optional[Dict]:
@@ -1500,7 +1638,8 @@ async def chat_stream(req: ChatRequest):
                         
                         result = await file_cleaner.ai_clean_file(
                             filepath=parsed["filepath"],
-                            instruction=parsed["instruction"]
+                            instruction=parsed["instruction"],
+                            command_text=last_user  # 保留这个参数
                         )
 
                         if result["success"]:
@@ -1553,9 +1692,10 @@ async def chat_stream(req: ChatRequest):
             if clean_cmd and clean_cmd.get("action") == "clean":
                 print(f"[DEBUG] 识别为基础清洗操作: {clean_cmd}")
                 try:
-                    result = file_cleaner.clean_file(
-                        filepath=clean_cmd["filepath"],
-                        rules=clean_cmd["rules"]
+                    result = await file_manager.clean_file(
+                    filepath=clean_cmd["filepath"],
+                    rules=clean_cmd["rules"],
+                     command_text=last_user
                     )
                     if result["success"]:
                         output = f"""✅ 文件清洗完成！
@@ -1581,6 +1721,53 @@ async def chat_stream(req: ChatRequest):
                     return
                 except Exception as e:
                     output = f"❌ 清洗失败: {str(e)}"
+                    for i in range(0, len(output), 80):
+                        data = json.dumps({"text": output[i:i+80]}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+
+            # ──────────────────────────────────────────────────────────────
+            # 0. 优先判断智能填表操作
+            # ──────────────────────────────────────────────────────────────
+            fill_keywords = ["填表", "填写表格", "填写excel", "填入表格", "智能填表"]
+            if any(kw in last_user for kw in fill_keywords):
+                print(f"[DEBUG] 识别为智能填表操作")
+                # 提取 Excel 文件名
+                import re
+                excel_match = re.search(r'([\w\u4e00-\u9fa5]+\.(xlsx|xls))', last_user)
+                if excel_match:
+                    excel_file = excel_match.group(1)
+                    try:
+                        result = await excel_filler.fill_excel_with_ai(
+                            excel_path=excel_file,
+                            instruction=last_user
+                        )
+                        if result["success"]:
+                            output = f"""✅ 智能填表完成！
+
+            **表格文件**: {result['filepath']}
+            **填写的行数据**: {json.dumps(result['filled_row'], ensure_ascii=False, indent=2)}
+            **使用的个人信息**: {json.dumps(result['personal_info_used'], ensure_ascii=False, indent=2)}
+
+            新文件已保存为: {result['filepath']}"""
+                        else:
+                            output = f"❌ 填表失败: {result['message']}"
+                        
+                        for i in range(0, len(output), 80):
+                            data = json.dumps({"text": output[i:i+80]}, ensure_ascii=False)
+                            yield f"data: {data}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                    except Exception as e:
+                        output = f"❌ 填表失败: {str(e)}"
+                        for i in range(0, len(output), 80):
+                            data = json.dumps({"text": output[i:i+80]}, ensure_ascii=False)
+                            yield f"data: {data}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                else:
+                    output = "❌ 请指定要填写的 Excel 文件名，如：填写表格 人员信息.xlsx"
                     for i in range(0, len(output), 80):
                         data = json.dumps({"text": output[i:i+80]}, ensure_ascii=False)
                         yield f"data: {data}\n\n"
