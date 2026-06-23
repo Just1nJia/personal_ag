@@ -6,7 +6,6 @@ from email.utils import parseaddr
 import hashlib
 import config
 from memory import db
-from web.logger import log_email  # ← 添加这行
 
 
 def _decode_header_value(raw) -> str:
@@ -137,14 +136,8 @@ def fetch_new_emails(limit: int = 30) -> list[dict]:
 
         mail.logout()
         _safe_print(f"[Email] 拉取完成，发现 {len(new_emails)} 封新邮件")
-        
-        # ============================================================
-        # 添加日志记录（在函数返回前，记录拉取结果）
-        # ============================================================
-        log_email("system", f"拉取邮件: {len(new_emails)} 封新邮件")
 
     except Exception as e:
         print(f"[Email] 读取失败: {e}")
-        log_email("system", f"拉取邮件失败: {e}")
 
     return new_emails

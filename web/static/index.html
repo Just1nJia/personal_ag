@@ -405,7 +405,18 @@
   </button>
 </div>
 
+<!-- Toast 通知（独立于设置页面，不受 renderSettings 影响） -->
+<div id="toast" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--green);color:white;padding:12px 28px;border-radius:8px;font-size:14px;font-weight:500;box-shadow:0 4px 20px rgba(0,0,0,0.4);display:none;cursor:pointer;transition:opacity 0.3s;border:1px solid rgba(255,255,255,0.1);">
+  ✅ 已保存
+</div>
+
 <!-- Main -->
+
+<!-- Toast 通知 -->
+<div id="toast" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;background:var(--green);color:white;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:500;box-shadow:0 4px 20px rgba(0,0,0,0.3);display:none;transition:opacity 0.3s;">
+  ✅ 已保存
+</div>
+
 <div class="main">
 
   <!-- ─── Chat ─── -->
@@ -415,8 +426,12 @@
         <div class="view-title">Aegis</div>
         <div class="view-subtitle" id="chat-subtitle">你好，有什么需要帮忙的？</div>
       </div>
-      <div style="margin-left:auto;display:flex;gap:8px;">
-        <button class="btn" onclick="clearChat()" title="清空对话">🗑️ 清空</button>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+        <span id="user-display" style="font-size:13px;color:var(--muted);"></span>
+        <button class="btn" onclick="logout()" style="font-size:12px;padding:4px 10px;color:var(--red);border-color:rgba(248,81,73,0.3);">
+          🚪 退出
+        </button>
+        <button class="btn" onclick="clearChat()" title="清空对话" style="font-size:12px;padding:4px 10px;">🗑️ 清空</button>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;">
           <input type="checkbox" id="use-memory" checked style="accent-color:var(--accent);"> 记忆注入
         </label>
@@ -460,6 +475,10 @@
   <div class="view" id="view-emails">
     <div class="view-header">
       <div class="view-title">📧 邮件</div>
+      <button class="btn btn-primary" onclick="syncEmails()" style="margin-left:auto;font-size:13px;padding:5px 14px;">
+        🔄 同步邮件
+      </button>
+      <span id="sync-status" style="font-size:13px;color:var(--muted);margin-left:8px;"></span>
     </div>
     <div class="filter-bar">
       <label style="font-size:13px;color:var(--muted);">重要度 ≥</label>
@@ -648,7 +667,7 @@
   <div class="view" id="view-settings">
     <div class="view-header">
       <div class="view-title">⚙️ 系统设置</div>
-      <button class="btn" onclick="loadSettings()" style="margin-left:auto;">↻ 重新加载</button>
+      <button class="btn" onclick="resetSettings()" style="margin-left:auto;">↻ 初始化</button>
     </div>
     <div class="settings-layout" id="settings-body">
       <div style="color:var(--muted);padding:20px;">加载中...</div>
@@ -720,6 +739,90 @@ function escapeHtml(s) {
 
 function escAttr(s) {
   return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+}
+
+async function login() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const btn = document.getElementById('login-btn');
+  const error = document.getElementById('login-error');
+
+  if (!username || !password) {
+    error.textContent = '请输入用户名和密码';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+  error.textContent = '';
+
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ username, password })
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      error.style.color = '#3fb950';
+      error.textContent = '✅ 登录成功，跳转中...';
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 500);
+    } else {
+      error.style.color = '#f85149';
+      error.textContent = '❌ ' + data.message;
+    }
+  } catch (e) {
+    error.textContent = '❌ 网络错误: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '登 录';
+  }
+}
+
+async function logout() {
+  if (!confirm('确认退出登录？')) return;
+  
+  try {
+    const resp = await fetch('/api/auth/logout', { 
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include'  // ← 添加这一行
+    });
+    const data = await resp.json();
+    if (data.success) {
+      window.location.href = '/';
+    } else {
+      alert('退出失败: ' + data.message);
+    }
+  } catch (e) {
+    console.error('退出失败:', e);
+    alert('退出失败: ' + e.message);
+  }
+}
+
+// ── 检查登录状态 ──────────────────────────────────────────────────────────
+
+async function checkAuthStatus() {
+  try {
+    const resp = await fetch('/api/auth/status', {
+      credentials: 'include'  // ← 添加这一行
+    });
+    const data = await resp.json();
+    if (data.logged_in) {
+      const display = document.getElementById('user-display');
+      if (display) {
+        display.textContent = '👤 ' + data.username;
+      }
+    } else {
+      window.location.href = '/';
+    }
+  } catch (e) {
+    console.error('检查登录状态失败:', e);
+  }
 }
 
 async function sendMessage() {
@@ -1268,6 +1371,76 @@ async function loadEmails() {
   document.getElementById('email-count').textContent = `共 ${data.total} 封`;
 }
 
+async function syncEmails() {
+  const btn = document.querySelector('#view-emails .btn-primary');
+  const status = document.getElementById('sync-status');
+  
+  if (!btn) return;
+  
+  btn.disabled = true;
+  btn.textContent = '⏳ 同步中...';
+  status.textContent = '正在连接邮箱...';
+  status.style.color = 'var(--yellow)';
+  
+  try {
+    const months = prompt('请输入同步月份数（1-24，默认6）：', '6');
+    if (months === null) {
+      btn.disabled = false;
+      btn.textContent = '🔄 同步邮件';
+      status.textContent = '';
+      return;
+    }
+    
+    const monthNum = parseInt(months) || 6;
+    
+    const response = await fetch(`/api/emails/sync?months=${Math.min(Math.max(monthNum, 1), 24)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      const data = result.data;
+      let msg = `✅ 同步完成！`;
+      if (data['163'] && data['163'].count > 0) {
+        msg += ` 163邮箱: ${data['163'].count} 封新邮件`;
+      }
+      if (data['gmail'] && data['gmail'].count > 0) {
+        msg += ` Gmail: ${data['gmail'].count} 封新邮件`;
+      }
+      if (data['163'] && data['163'].status === 'no_new' && data['gmail'] && data['gmail'].status === 'no_new') {
+        msg = '📭 没有新邮件';
+      }
+      status.textContent = msg;
+      status.style.color = 'var(--green)';
+      
+      // ============================================================
+      // 刷新邮件列表
+      // ============================================================
+      console.log('🔄 刷新邮件列表...');
+      loadEmails();
+      
+    } else {
+      status.textContent = '❌ ' + result.message;
+      status.style.color = 'var(--red)';
+    }
+  } catch (error) {
+    console.error('同步失败:', error);
+    status.textContent = '❌ 同步失败: ' + error.message;
+    status.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 同步邮件';
+    
+    setTimeout(() => {
+      if (status && !status.textContent.includes('❌')) {
+        status.textContent = '';
+      }
+    }, 8000);
+  }
+}
+
 function impBadge(imp) {
   const cls = imp >= 4 ? 'badge-imp3' : imp >= 3 ? 'badge-imp2' : 'badge-imp1';
   const stars = '★'.repeat(imp) + '☆'.repeat(5 - imp);
@@ -1414,11 +1587,64 @@ async function handlePending(id, action, btn) {
 // ── 设置 ────────────────────────────────────────────────────────────────────
 let _settingsData = null;
 
+async function resetSettings() {
+  if (!confirm('⚠️ 确认重置所有配置为默认值？\n\n当前所有配置将被清空，恢复为初始模板！')) {
+    return;
+  }
+  
+  const body = document.getElementById('settings-body');
+  body.innerHTML = '<div style="color:var(--muted);padding:20px;">🔄 正在重置配置...</div>';
+  
+  try {
+    const r = await fetch('/api/settings/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    if (!r.ok) {
+      const err = await r.text();
+      throw new Error(err || `HTTP ${r.status}`);
+    }
+    
+    const result = await r.json();
+    
+    if (!result.success) {
+      throw new Error(result.message || '重置失败');
+    }
+    
+    _settingsData = result.config;
+    
+    // 重新渲染设置页面
+    renderSettings(_settingsData);
+    
+    // 显示成功消息
+    const st = document.getElementById('settings-status');
+    if (st) {
+      st.textContent = '✅ 已重置为默认配置';
+      st.style.color = 'var(--green)';
+      setTimeout(() => { 
+        if (st && st.textContent === '✅ 已重置为默认配置') {
+          st.textContent = ''; 
+        }
+      }, 3000);
+    }
+    
+    // 刷新页面其他部分
+    loadDashboard();
+    
+  } catch (e) {
+    console.error('重置失败:', e);
+    body.innerHTML = `<div style="color:var(--red);padding:20px;">❌ 重置失败: ${e.message}</div>`;
+  }
+}
+
 async function loadSettings() {
   const body = document.getElementById('settings-body');
   body.innerHTML = '<div style="color:var(--muted);padding:20px;">加载中...</div>';
   try {
-    _settingsData = await fetch('/api/settings').then(r => r.json());
+    const response = await fetch('/api/settings');
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    _settingsData = await response.json();
     renderSettings(_settingsData);
   } catch(e) {
     body.innerHTML = `<div style="color:var(--red);padding:20px;">加载失败: ${e.message}</div>`;
@@ -1427,6 +1653,18 @@ async function loadSettings() {
 
 function renderSettings(s) {
   const body = document.getElementById('settings-body');
+  
+  // ============================================================
+  // 保存当前状态信息（在重新渲染前）
+  // ============================================================
+  const currentStatus = document.getElementById('settings-status');
+  let statusText = '';
+  let statusColor = '';
+  if (currentStatus) {
+    statusText = currentStatus.textContent || '';
+    statusColor = currentStatus.style.color || '';
+  }
+
   const usr = s.user || {};
   const api = s.api || {};
   const e163 = s.email_163 || {};
@@ -1438,6 +1676,16 @@ function renderSettings(s) {
   const ai = s.ai || {};
   const mem = s.memory || {};
   const web = s.web || {};
+  
+  // ============================================================
+  // 兼容 upload 和 file 两种字段名
+  // ============================================================
+  const fileConfig = s.file || {};
+  const uploadConfig = s.upload || {};
+  
+  const uploadDir = fileConfig.upload_dir || uploadConfig.upload_dir || '';
+  const scriptsDir = fileConfig.scripts_dir || uploadConfig.scripts_dir || '';
+  const scrapeDir = fileConfig.scrape_dir || uploadConfig.scrape_dir || '';
 
   const roots = (sc.roots || []).map(r => `
     <div class="scan-root-item">
@@ -1464,6 +1712,7 @@ function renderSettings(s) {
 
   body.innerHTML = `
     <div class="settings-grid">
+      <!-- 用户信息 -->
       <div class="settings-section">
         <div class="settings-section-title">👤 用户信息</div>
         <div class="settings-row"><div><div class="settings-label">显示名</div></div><input class="settings-input" id="usr-owner_name" value="${escHtml(usr.owner_name ?? '')}" onchange="markDirty()"></div>
@@ -1471,24 +1720,59 @@ function renderSettings(s) {
         <div class="settings-row"><div><div class="settings-label">英文名</div></div><input class="settings-input" id="usr-owner_en_name" value="${escHtml(usr.owner_en_name ?? '')}" onchange="markDirty()"></div>
         <div class="settings-row"><div><div class="settings-label">微信 wxid</div></div><input class="settings-input wide" id="usr-aegis_wxid" value="${escHtml(usr.aegis_wxid ?? '')}" onchange="markDirty()"></div>
       </div>
+
+      <!-- AI API 配置 -->
       <div class="settings-section">
         <div class="settings-section-title">🔑 AI API 配置</div>
-        <div class="settings-row"><div><div class="settings-label">API Key</div></div><input class="settings-input wide" type="password" id="api-volc_api_key" placeholder="${api.volc_api_key === '' ? '已配置' : '未配置'}" onchange="markDirty()"></div>
-        <div class="settings-row"><div><div class="settings-label">API Base URL</div></div><input class="settings-input wide" id="api-volc_api_base" value="${escHtml(api.volc_api_base ?? '')}" onchange="markDirty()"></div>
-        <div class="settings-row"><div><div class="settings-label">默认模型</div></div><input class="settings-input wide" id="api-volc_model" value="${escHtml(api.volc_model ?? '')}" onchange="markDirty()"></div>
+        <div class="settings-row"><div><div class="settings-label">API Key</div></div><input class="settings-input wide" type="text" id="api-volc_api_key" value="${escHtml(api.volc_api_key || '')}" placeholder="请输入 API Key" onchange="markDirty()" style="font-family:monospace;font-size:12px;width:400px;"></div>
+        <div class="settings-row"><div><div class="settings-label">API Base URL</div></div><input class="settings-input wide" type="text" id="api-volc_api_base" value="${escHtml(api.volc_api_base || '')}" onchange="markDirty()" style="font-family:monospace;font-size:12px;width:400px;"></div>
+        <div class="settings-row"><div><div class="settings-label">默认模型</div></div><input class="settings-input wide" type="text" id="api-volc_model" value="${escHtml(api.volc_model || '')}" onchange="markDirty()" style="font-family:monospace;font-size:12px;width:400px;"></div>
       </div>
+
+      <!-- 163 邮箱 -->
       <div class="settings-section"><div class="settings-section-title">📧 163 邮箱配置</div>
         <div class="settings-row"><div><div class="settings-label">邮箱地址</div></div><input class="settings-input wide" type="email" id="e163-email" value="${escHtml(e163.email ?? '')}" onchange="markDirty()"></div>
-        <div class="settings-row"><div><div class="settings-label">授权码</div></div><input class="settings-input wide" type="password" id="e163-auth_code" placeholder="${e163.email ? '已配置' : '未配置'}" onchange="markDirty()"></div>
+        <div class="settings-row"><div><div class="settings-label">授权码</div></div><input class="settings-input wide" type="text" id="e163-auth_code" value="${escHtml(e163.auth_code ?? '')}" placeholder="请输入授权码" onchange="markDirty()" style="font-family:monospace;font-size:12px;width:400px;"></div>
         <div class="settings-row"><div><div class="settings-label">IMAP 服务器</div></div><input class="settings-input" id="e163-imap_host" value="${escHtml(e163.imap_host ?? 'imap.163.com')}" onchange="markDirty()"></div>
         <div class="settings-row"><div><div class="settings-label">SMTP 服务器</div></div><input class="settings-input" id="e163-smtp_host" value="${escHtml(e163.smtp_host ?? 'smtp.163.com')}" onchange="markDirty()"></div>
       </div>
+
+      <!-- Gmail -->
       <div class="settings-section"><div class="settings-section-title">📧 Gmail 配置</div>
         <div class="settings-row"><div><div class="settings-label">Gmail 地址</div></div><input class="settings-input wide" type="email" id="egmail-email" value="${escHtml(egmail.email ?? '')}" onchange="markDirty()"></div>
-        <div class="settings-row"><div><div class="settings-label">应用密码</div></div><input class="settings-input wide" type="password" id="egmail-app_password" placeholder="${egmail.email ? '已配置' : '未配置'}" onchange="markDirty()"></div>
+        <div class="settings-row"><div><div class="settings-label">应用密码</div></div><input class="settings-input wide" type="text" id="egmail-app_password" value="${escHtml(egmail.app_password ?? '')}" placeholder="请输入应用密码" onchange="markDirty()" style="font-family:monospace;font-size:12px;width:400px;"></div>
         <div class="settings-row"><div><div class="settings-label">IMAP 服务器</div></div><input class="settings-input" id="egmail-imap_host" value="${escHtml(egmail.imap_host ?? 'imap.gmail.com')}" onchange="markDirty()"></div>
         <div class="settings-row"><div><div class="settings-label">SMTP 服务器</div></div><input class="settings-input" id="egmail-smtp_host" value="${escHtml(egmail.smtp_host ?? 'smtp.gmail.com')}" onchange="markDirty()"></div>
       </div>
+
+      <!-- 文件操作目录 -->
+      <div class="settings-section full-width">
+        <div class="settings-section-title">📁 文件操作目录</div>
+        <div style="margin-bottom:12px;font-size:13px;color:var(--muted);">
+          设置文件操作的根目录。所有文件操作（清洗、脚本执行、爬虫输出）都基于此目录。
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-label">操作目录</div></div>
+          <input class="settings-input wide" id="upload-dir" 
+                 style="width:400px;font-family:monospace;font-size:12px;" 
+                 value="${escHtml(uploadDir)}"
+                 placeholder="${uploadDir ? '' : '未配置，请输入目录路径'}"
+                 onchange="markDirty()">
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-label">脚本目录</div></div>
+          <div style="font-size:12px;color:var(--muted);font-family:monospace;" id="scripts-dir-display">${escHtml(scriptsDir || '未配置')}</div>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-label">爬虫输出目录</div></div>
+          <div style="font-size:12px;color:var(--muted);font-family:monospace;" id="scrape-dir-display">${escHtml(scrapeDir || '未配置')}</div>
+        </div>
+        <div style="margin-top:8px;padding:8px 12px;background:var(--bg);border-radius:6px;font-size:12px;color:var(--muted);">
+          💡 保存后立即生效，无需重启
+        </div>
+      </div>
+
+      <!-- 定时任务 -->
       <div class="settings-section"><div class="settings-section-title">⏰ 定时任务</div>
         <div class="settings-row"><div><div class="settings-label">日报推送时间</div></div><input class="settings-input" type="number" min="0" max="23" id="sch-briefing_hour" value="${sch.briefing_hour ?? 8}" onchange="markDirty()"> 时</div>
         <div class="settings-row"><div><div class="settings-label">RSS 抓取时间</div></div><input class="settings-input" type="number" min="0" max="23" id="sch-rss_hour" value="${sch.rss_hour ?? 7}" onchange="markDirty()"> 时</div>
@@ -1499,6 +1783,8 @@ function renderSettings(s) {
         <div class="settings-row"><div><div class="settings-label">联系人刷新间隔</div></div><input class="settings-input" type="number" min="10" max="120" id="sch-wechat_contacts_minutes" value="${sch.wechat_contacts_minutes ?? 30}" onchange="markDirty()"> 分钟</div>
         <div class="settings-row"><div><div class="settings-label">周报发送</div></div><input class="settings-input" id="sch-weekly_report_day" value="${escHtml(sch.weekly_report_day ?? 'sun')}" onchange="markDirty()"><input class="settings-input" type="number" min="0" max="23" id="sch-weekly_report_hour" value="${sch.weekly_report_hour ?? 9}" onchange="markDirty()"> 时</div>
       </div>
+
+      <!-- 通知设置 -->
       <div class="settings-section"><div class="settings-section-title">🔔 通知设置</div>
         <div class="settings-row"><div><div class="settings-label">推送邮箱</div></div><input class="settings-input wide" type="email" id="ntf-push_email" value="${escHtml(ntf.push_email ?? '')}" onchange="markDirty()"></div>
         <div class="settings-row"><div><div class="settings-label">邮件重要度阈值</div></div><input class="settings-input" type="number" min="1" max="5" id="ntf-urgent_importance" value="${ntf.urgent_importance ?? 4}" onchange="markDirty()"></div>
@@ -1507,6 +1793,8 @@ function renderSettings(s) {
         <div class="settings-row"><div><div class="settings-label">同步失败告警</div></div><label class="settings-toggle"><input type="checkbox" id="ntf-alert_on_sync_failure" ${ntf.alert_on_sync_failure !== false ? 'checked' : ''} onchange="markDirty()"><span class="toggle-slider"></span></label></div>
         <div class="settings-row"><div><div class="settings-label">告警触发次数</div></div><input class="settings-input" type="number" min="1" max="10" id="ntf-sync_failure_threshold" value="${ntf.sync_failure_threshold ?? 3}" onchange="markDirty()"></div>
       </div>
+
+      <!-- AI 参数 -->
       <div class="settings-section"><div class="settings-section-title">🤖 AI 参数</div>
         <div class="settings-row"><div><div class="settings-label">使用模型</div></div><input class="settings-input wide" id="ai-model" value="${escHtml(ai.model ?? '')}" onchange="markDirty()"></div>
         <div class="settings-row"><div><div class="settings-label">日报最大字数</div></div><input class="settings-input" type="number" min="100" max="2000" id="ai-briefing_max_chars" value="${ai.briefing_max_chars ?? 400}" onchange="markDirty()"></div>
@@ -1515,6 +1803,8 @@ function renderSettings(s) {
         <div class="settings-row"><div><div class="settings-label">规则评分优先</div></div><label class="settings-toggle"><input type="checkbox" id="ai-briefing_rule_check" ${ai.briefing_rule_check !== false ? 'checked' : ''} onchange="markDirty()"><span class="toggle-slider"></span></label></div>
         <div class="settings-row"><div><div class="settings-label">自动提取焦点</div></div><label class="settings-toggle"><input type="checkbox" id="ai-focus_extract_enabled" ${ai.focus_extract_enabled !== false ? 'checked' : ''} onchange="markDirty()"><span class="toggle-slider"></span></label></div>
       </div>
+
+      <!-- 记忆管理 -->
       <div class="settings-section"><div class="settings-section-title">🧠 记忆管理</div>
         <div class="settings-row"><div><div class="settings-label">焦点最大条目</div></div><input class="settings-input" type="number" min="5" max="50" id="mem-focus_max_active" value="${mem.focus_max_active ?? 20}" onchange="markDirty()"></div>
         <div class="settings-row"><div><div class="settings-label">联系人档案上限</div></div><input class="settings-input" type="number" min="5" max="50" id="mem-people_md_limit" value="${mem.people_md_limit ?? 20}" onchange="markDirty()"></div>
@@ -1522,14 +1812,23 @@ function renderSettings(s) {
         <div class="settings-row"><div><div class="settings-label">Pending 过期天数</div></div><input class="settings-input" type="number" min="7" max="90" id="mem-pending_expire_days" value="${mem.pending_expire_days ?? 30}" onchange="markDirty()"></div>
         <div class="settings-row"><div><div class="settings-label">活跃联系人 Top N</div></div><input class="settings-input" type="number" min="10" max="100" id="mem-contact_top_n" value="${mem.contact_top_n ?? 30}" onchange="markDirty()"></div>
       </div>
+
+      <!-- Web 服务 -->
       <div class="settings-section"><div class="settings-section-title">🌐 Web 服务</div>
         <div class="settings-row"><div><div class="settings-label">监听端口</div></div><input class="settings-input" type="number" min="1024" max="65535" id="web-port" value="${web.port ?? 8077}" onchange="markDirty()"></div>
         <div class="settings-row"><div><div class="settings-label">系统名称</div></div><input class="settings-input" id="web-title" value="${escHtml(web.title ?? 'Aegis')}" onchange="markDirty()"></div>
       </div>
+
+      <!-- 扫描目录 -->
       <div class="settings-section full-width"><div class="settings-section-title">📁 扫描目录</div><div class="scan-root-list" id="scan-root-list">${roots}</div><div class="add-root-row"><input class="add-root-input" id="new-root-input" placeholder="输入文件夹路径" onkeydown="if(event.key==='Enter')addScanRoot()"><button class="btn btn-primary" onclick="addScanRoot()">＋ 添加</button></div></div>
+
+      <!-- 功能模块 -->
       <div class="settings-section full-width"><div class="settings-section-title">🔌 功能模块</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0 24px;">${moduleRows}</div></div>
     </div>
-    <div class="settings-save-bar"><button class="btn btn-primary" id="settings-save-btn" onclick="saveSettings()" disabled>保存设置</button><span class="settings-status" id="settings-status"></span></div>
+    <div class="settings-save-bar">
+      <button class="btn btn-primary" id="settings-save-btn" onclick="saveSettings()" disabled>保存设置</button>
+      <span class="settings-status" id="settings-status"></span>
+    </div>
   `;
 }
 
@@ -1552,8 +1851,9 @@ function _getVal(id, type) {
 async function saveSettings() {
   const btn = document.getElementById('settings-save-btn');
   const st = document.getElementById('settings-status');
+  
   btn.disabled = true;
-  st.textContent = '保存中...';
+  st.textContent = '⏳ 保存中...';
   st.style.color = 'var(--muted)';
 
   const modules = {};
@@ -1563,32 +1863,164 @@ async function saveSettings() {
   }
 
   const payload = {
-    user: { owner_name: _getVal('usr-owner_name'), owner_full_name: _getVal('usr-owner_full_name'), owner_en_name: _getVal('usr-owner_en_name'), aegis_wxid: _getVal('usr-aegis_wxid') },
-    api: { volc_api_key: _getVal('api-volc_api_key'), volc_api_base: _getVal('api-volc_api_base'), volc_model: _getVal('api-volc_model') },
-    email_163: { email: _getVal('e163-email'), auth_code: _getVal('e163-auth_code'), imap_host: _getVal('e163-imap_host'), imap_port: _settingsData?.email_163?.imap_port ?? 993, smtp_host: _getVal('e163-smtp_host'), smtp_port: _settingsData?.email_163?.smtp_port ?? 465 },
-    email_gmail: { email: _getVal('egmail-email'), app_password: _getVal('egmail-app_password'), imap_host: _getVal('egmail-imap_host'), imap_port: _settingsData?.email_gmail?.imap_port ?? 993, smtp_host: _getVal('egmail-smtp_host'), smtp_port: _settingsData?.email_gmail?.smtp_port ?? 587 },
-    scan: { roots: _settingsData?.scan?.roots || [] },
-    schedule: { briefing_hour: _getVal('sch-briefing_hour','int'), briefing_minute: _settingsData?.schedule?.briefing_minute ?? 0, rss_hour: _getVal('sch-rss_hour','int'), focus_update_hour: _getVal('sch-focus_update_hour','int'), profile_update_hour: _getVal('sch-profile_update_hour','int'), email_check_minutes: _getVal('sch-email_check_minutes','int'), wechat_sync_minutes: _getVal('sch-wechat_sync_minutes','int'), wechat_contacts_minutes: _getVal('sch-wechat_contacts_minutes','int'), weekly_report_day: _getVal('sch-weekly_report_day'), weekly_report_hour: _getVal('sch-weekly_report_hour','int') },
-    notify: { push_email: _getVal('ntf-push_email'), urgent_importance: _getVal('ntf-urgent_importance','int'), briefing_enabled: _getVal('ntf-briefing_enabled'), weekly_report_enabled: _getVal('ntf-weekly_report_enabled'), alert_on_sync_failure: _getVal('ntf-alert_on_sync_failure'), sync_failure_threshold: _getVal('ntf-sync_failure_threshold','int') },
-    memory: { focus_max_active: _getVal('mem-focus_max_active','int'), people_md_limit: _getVal('mem-people_md_limit','int'), focus_dedup_threshold: _getVal('mem-focus_dedup_threshold','number'), pending_expire_days: _getVal('mem-pending_expire_days','int'), contact_top_n: _getVal('mem-contact_top_n','int'), group_top_n: _settingsData?.memory?.group_top_n ?? 15 },
-    modules, wechat: _settingsData?.wechat || {},
-    ai: { model: _getVal('ai-model'), briefing_max_chars: _getVal('ai-briefing_max_chars','int'), daily_score_threshold: _getVal('ai-daily_score_threshold','number'), summary_max_tokens: _getVal('ai-summary_max_tokens','int'), briefing_rule_check: _getVal('ai-briefing_rule_check'), focus_extract_enabled: _getVal('ai-focus_extract_enabled') },
-    web: { port: _getVal('web-port','int'), title: _getVal('web-title') }
+    user: {
+      owner_name: _getVal('usr-owner_name') || _settingsData?.user?.owner_name || '',
+      owner_full_name: _getVal('usr-owner_full_name') || _settingsData?.user?.owner_full_name || '',
+      owner_en_name: _getVal('usr-owner_en_name') || _settingsData?.user?.owner_en_name || '',
+      aegis_wxid: _getVal('usr-aegis_wxid') || _settingsData?.user?.aegis_wxid || ''
+    },
+    api: {
+      volc_api_key: _getVal('api-volc_api_key') || _settingsData?.api?.volc_api_key || '',
+      volc_api_base: _getVal('api-volc_api_base') || _settingsData?.api?.volc_api_base || '',
+      volc_model: _getVal('api-volc_model') || _settingsData?.api?.volc_model || ''
+    },
+    email_163: {
+      email: _getVal('e163-email'),
+      auth_code: _getVal('e163-auth_code'),
+      imap_host: _getVal('e163-imap_host'),
+      imap_port: _settingsData?.email_163?.imap_port ?? 993,
+      smtp_host: _getVal('e163-smtp_host'),
+      smtp_port: _settingsData?.email_163?.smtp_port ?? 465
+    },
+    email_gmail: {
+      email: _getVal('egmail-email'),
+      app_password: _getVal('egmail-app_password'),
+      imap_host: _getVal('egmail-imap_host'),
+      imap_port: _settingsData?.email_gmail?.imap_port ?? 993,
+      smtp_host: _getVal('egmail-smtp_host'),
+      smtp_port: _settingsData?.email_gmail?.smtp_port ?? 587
+    },
+    file: {
+      upload_dir: _getVal('upload-dir')
+    },
+    wechat: {
+      wxid: _getVal('usr-aegis_wxid'),
+      display_name: "Aegis"
+    },
+    scan: {
+      roots: _settingsData?.scan?.roots || []
+    },
+    schedule: {
+      briefing_hour: _getVal('sch-briefing_hour','int'),
+      briefing_minute: _settingsData?.schedule?.briefing_minute ?? 0,
+      rss_hour: _getVal('sch-rss_hour','int'),
+      focus_update_hour: _getVal('sch-focus_update_hour','int'),
+      profile_update_hour: _getVal('sch-profile_update_hour','int'),
+      email_check_minutes: _getVal('sch-email_check_minutes','int'),
+      wechat_sync_minutes: _getVal('sch-wechat_sync_minutes','int'),
+      wechat_contacts_minutes: _getVal('sch-wechat_contacts_minutes','int'),
+      weekly_report_day: _getVal('sch-weekly_report_day'),
+      weekly_report_hour: _getVal('sch-weekly_report_hour','int')
+    },
+    notify: {
+      push_email: _getVal('ntf-push_email'),
+      urgent_importance: _getVal('ntf-urgent_importance','int'),
+      briefing_enabled: _getVal('ntf-briefing_enabled'),
+      weekly_report_enabled: _getVal('ntf-weekly_report_enabled'),
+      alert_on_sync_failure: _getVal('ntf-alert_on_sync_failure'),
+      sync_failure_threshold: _getVal('ntf-sync_failure_threshold','int')
+    },
+    memory: {
+      focus_max_active: _getVal('mem-focus_max_active','int'),
+      people_md_limit: _getVal('mem-people_md_limit','int'),
+      focus_dedup_threshold: _getVal('mem-focus_dedup_threshold','number'),
+      pending_expire_days: _getVal('mem-pending_expire_days','int'),
+      contact_top_n: _getVal('mem-contact_top_n','int'),
+      group_top_n: _settingsData?.memory?.group_top_n ?? 15
+    },
+    modules: modules,
+    ai: {
+      model: _getVal('ai-model'),
+      briefing_max_chars: _getVal('ai-briefing_max_chars','int'),
+      daily_score_threshold: _getVal('ai-daily_score_threshold','number'),
+      summary_max_tokens: _getVal('ai-summary_max_tokens','int'),
+      briefing_rule_check: _getVal('ai-briefing_rule_check'),
+      focus_extract_enabled: _getVal('ai-focus_extract_enabled')
+    },
+    web: {
+      port: _getVal('web-port','int'),
+      title: _getVal('web-title')
+    }
   };
 
   try {
-    const r = await fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    if (!r.ok) throw new Error(await r.text());
-    _settingsData = payload;
-    st.textContent = '✅ 已保存';
-    st.style.color = 'var(--green)';
-    setTimeout(() => { if (st) st.textContent = ''; }, 3000);
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    
+    if (!r.ok) {
+      const errorText = await r.text();
+      throw new Error(errorText || `HTTP ${r.status}`);
+    }
+    
+    const result = await r.json();
+    _settingsData = result.config || payload;
+    
+    // ============================================================
+    // 直接重新渲染设置页面
+    // ============================================================
+    renderSettings(_settingsData);
+    
+    // ============================================================
+    // 使用 setTimeout 确保 DOM 渲染完成后再设置状态
+    // 用 200ms 足够
+    // ============================================================
+    setTimeout(() => {
+      const st2 = document.getElementById('settings-status');
+      if (st2) {
+        st2.textContent = '✅ 已保存';
+        st2.style.color = 'var(--green)';
+      }
+      const btn2 = document.getElementById('settings-save-btn');
+      if (btn2) btn2.disabled = false;
+    }, 200);
+    
   } catch(e) {
+    console.error('保存失败:', e);
     st.textContent = '❌ 保存失败: ' + e.message;
     st.style.color = 'var(--red)';
     btn.disabled = false;
   }
 }
+
+// ============================================================
+// Toast 通知函数
+// ============================================================
+function showToast(message, color = 'var(--green)') {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  
+  toast.textContent = message;
+  toast.style.background = color;
+  toast.style.display = 'block';
+  toast.style.opacity = '1';
+  
+  // 一直显示，不自动消失
+  // 如果点击页面其他地方，可以关闭
+}
+
+// 可选：点击 Toast 关闭它
+document.addEventListener('click', function(e) {
+  const toast = document.getElementById('toast');
+  if (toast && toast.style.display === 'block') {
+    // 点击任何地方关闭 toast（除了 toast 本身）
+    if (!toast.contains(e.target)) {
+      toast.style.display = 'none';
+    }
+  }
+});
+
+// 或者点击 Toast 本身关闭
+document.addEventListener('DOMContentLoaded', function() {
+  const toast = document.getElementById('toast');
+  if (toast) {
+    toast.addEventListener('click', function() {
+      this.style.display = 'none';
+    });
+  }
+});
 
 async function addScanRoot() {
   const input = document.getElementById('new-root-input');
@@ -2031,6 +2463,9 @@ function clearScrapeForm() {
 
 // ── 初始化 ──────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
+  // 检查登录状态
+  await checkAuthStatus();
+  
   try {
     const s = await fetch('/api/status').then(r=>r.json());
     document.getElementById('chat-subtitle').textContent =

@@ -2,8 +2,7 @@
 from ai import client as ai
 from memory import db, vector_store
 from email_module.contacts import upsert_contact
-from web.logger import log_email, log_error  # ← 添加这行
-
+from web.logger import log_email
 
 def _safe_print(msg: str):
     try:
@@ -35,12 +34,6 @@ def process_new_emails(emails: list[dict]) -> list[dict]:
     对一批新邮件做 AI 分析，写库，返回重要性>=3 的邮件列表（用于推送）
     """
     important = []
-    
-    # ============================================================
-    # 记录开始处理日志
-    # ============================================================
-    log_email("system", f"开始处理 {len(emails)} 封邮件")
-    
     for em in emails:
         try:
             result = ai.analyze_email(
@@ -69,19 +62,16 @@ def process_new_emails(emails: list[dict]) -> list[dict]:
             )
 
             # 存入向量库（语义检索）
-            try:
-                vector_store.add_document(
-                    collection_name="emails",
-                    doc_id=em["id"],
-                    text=f"{em['subject']} {summary}",
-                    metadata={
-                        "from": em["from_addr"],
-                        "date": em["date"],
-                        "importance": importance,
-                    },
-                )
-            except Exception as e:
-                _safe_print(f"[Summarizer] 向量存储失败: {e}")
+            vector_store.add_document(
+                collection_name="emails",
+                doc_id=em["id"],
+                text=f"{em['subject']} {summary}",
+                metadata={
+                    "from": em["from_addr"],
+                    "date": em["date"],
+                    "importance": importance,
+                },
+            )
 
             # 存入 FTS5 全文索引（关键词检索）
             _index_to_fts(
@@ -136,14 +126,5 @@ def process_new_emails(emails: list[dict]) -> list[dict]:
 
         except Exception as e:
             _safe_print(f"[Summarizer] 处理失败 {em['subject']}: {e}")
-            # ============================================================
-            # 记录错误日志
-            # ============================================================
-            log_error("system", f"邮件处理失败: {em['subject']}", e)
-
-    # ============================================================
-    # 记录处理完成日志
-    # ============================================================
-    log_email("system", f"邮件处理完成: {len(emails)} 封, 重要 {len(important)} 封")
 
     return important

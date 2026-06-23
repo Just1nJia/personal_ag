@@ -23,8 +23,11 @@ def _b64_header(text: str) -> str:
     return f"=?utf-8?b?{base64.b64encode(text.encode('utf-8')).decode('ascii')}?="
 
 
-def find_file_in_upload_dir(filename: str, upload_dir: str = "C:/Users/hp/Desktop/upload") -> Optional[Path]:
+def find_file_in_upload_dir(filename: str, upload_dir: str = None) -> Optional[Path]:
     """在指定目录中查找文件（支持模糊匹配）"""
+    if upload_dir is None:
+        upload_dir = config.UPLOAD_DIR  # 从 config 读取
+    
     upload_path = Path(upload_dir)
     if not upload_path.exists():
         return None

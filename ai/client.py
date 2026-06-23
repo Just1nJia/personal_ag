@@ -1,39 +1,39 @@
 """
 火山引擎 Doubao API 封装
-使用 OpenAI 兼容接口 /api/v3/chat/completions
 """
 import json
 from openai import OpenAI
-import config
 
-_client = None
 
-def get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI(
-            api_key=config.VOLC_API_KEY,
-            base_url=config.VOLC_API_BASE,
-        )
-    return _client
+def get_client():
+    """每次调用都重新创建客户端"""
+    import config  # 动态导入
+    
+    if not config.VOLC_API_KEY or config.VOLC_API_KEY == "":
+        raise ValueError("❌ API Key 未配置")
+    if not config.VOLC_API_BASE or config.VOLC_API_BASE == "":
+        raise ValueError("❌ API Base URL 未配置")
+    if not config.VOLC_MODEL or config.VOLC_MODEL == "":
+        raise ValueError("❌ 模型名称未配置")
+    
+    return OpenAI(
+        api_key=config.VOLC_API_KEY,
+        base_url=config.VOLC_API_BASE,
+    )
 
 
 def chat(messages: list[dict], system_prompt: str = None,
          temperature: float = 0.7, inject_knowledge: bool = False) -> str:
-    """
-    基础对话。
-    inject_knowledge=True 时，自动从知识库检索相关背景注入 SYSTEM。
-    """
+    import config  # 动态导入
+    
     msgs = []
     if system_prompt:
         msgs.append({"role": "system", "content": system_prompt})
     msgs.extend(messages)
 
-    # 知识背景注入（OpenJarvis inject_context 模式）
     if inject_knowledge:
         try:
             from memory.context_inject import inject_context
-            # 取最后一条 user 消息作为查询
             user_query = next(
                 (m["content"] for m in reversed(messages) if m["role"] == "user"),
                 ""
@@ -41,12 +41,14 @@ def chat(messages: list[dict], system_prompt: str = None,
             if user_query:
                 msgs = inject_context(user_query, msgs)
         except Exception:
-            pass  # 知识注入失败时不影响正常对话
+            pass
 
-    resp = get_client().chat.completions.create(
+    client = get_client()
+    resp = client.chat.completions.create(
         model=config.VOLC_MODEL,
         messages=msgs,
         temperature=temperature,
+        stream=False,
     )
     return resp.choices[0].message.content.strip()
 
@@ -86,7 +88,6 @@ def extract_profile_info(text: str, source: str = "") -> dict:
         temperature=0.2,
     )
     try:
-        # 清理可能的 markdown 代码块
         result = result.strip().strip("```json").strip("```").strip()
         return json.loads(result)
     except Exception:
@@ -125,14 +126,8 @@ def analyze_email(subject: str, sender: str, body: str) -> dict:
 
 
 def generate_daily_briefing(context: dict) -> str:
-    """
-    生成每日简报。
-    系统提示词设计参考 OpenJarvis morning_digest.py：
-    - 按重要性降序排列
-    - 解释趋势而非枚举数据
-    - 绝对规则防止幻觉
-    - 严格字数限制保证简洁
-    """
+    """生成每日简报"""
+    import config
     from datetime import datetime
     now = datetime.now()
 
@@ -142,24 +137,14 @@ def generate_daily_briefing(context: dict) -> str:
         "你收到的是来自用户各个渠道的结构化数据。数据已经收集好出现在用户消息中，"
         "你不需要自己去获取任何信息。\n\n"
         "请按重要性降序生成简报：\n\n"
-        "1. 问候 + 优先事项 — 用一句话点出最需要处理的事，"
-        "把相关事项串联起来（例如：'国自然修改意见未回复，同时今天还有投稿截止，建议先处理意见'）。\n\n"
-        "2. 邮件摘要 — 按优先级处理所有渠道的邮件：\n"
-        "   - 首先：真实联系人发来的、需要回复或做决定的邮件\n"
-        "   - 其次：含截止日期或行动项的邮件\n"
-        "   - 跳过：自动通知、营销邮件、订阅内容\n"
-        "   - 如有草稿回复，简要提及\n\n"
-        "3. 重要联系人动态 — 有互动的重要联系人（期刊编辑、合作者等）简要说明。\n\n"
+        "1. 问候 + 优先事项 — 用一句话点出最需要处理的事\n\n"
+        "2. 邮件摘要 — 按优先级处理所有渠道的邮件\n\n"
+        "3. 重要联系人动态 — 有互动的重要联系人简要说明。\n\n"
         "4. 结语 — 一句前瞻性的话。\n\n"
-        "绝对规则（违反不可接受）：\n"
-        "- 只陈述数据中有的事实，零幻觉\n"
-        "- 不提及没有数据的来源\n"
-        "- 不描述你正在执行的动作\n"
-        "- 可以使用 emoji 让格式清晰，但不要过度\n"
-        "- 严格限制：400字以内，简洁是核心"
+        "绝对规则：只陈述数据中有的事实，零幻觉，严格限制400字以内"
     )
 
-    wechat_active  = context.get("wechat_active", "")
+    wechat_active = context.get("wechat_active", "")
     wechat_summary = context.get("wechat_summary", "")
     wechat_block = ""
     if wechat_active or wechat_summary:
@@ -179,80 +164,52 @@ def generate_daily_briefing(context: dict) -> str:
         f"{context.get('new_papers', '暂无')}\n\n"
         f"【个人档案】\n"
         f"{context.get('profile_summary', '暂无')}\n\n"
-        "请生成今日简报。要求：\n"
-        "- 优先级排序，把邮件和微信相关事项串联（如同一件事在两个渠道都有，合并说明）\n"
-        "- 学术/科研邮件重点突出\n"
-        "- 微信中有未解决的承诺或任务也要提及\n"
-        "- 如有新相关论文，简要提及\n"
-        "- 不要重复问候语\n"
-        "- 严格400字以内"
+        "请生成今日简报。要求：严格400字以内"
     )
 
     return chat(
         messages=[{"role": "user", "content": user_content}],
         system_prompt=system_prompt,
         temperature=0.7,
-        inject_knowledge=True,   # 日报生成时注入相关知识背景
+        inject_knowledge=True,
     )
 
 
 def evaluate_briefing(briefing: str, context: dict) -> tuple[float, str]:
-    """
-    日报质量评估：规则打分优先（零 token），仅规则分低于阈值时才调用 AI 补充。
-    返回 (score, feedback)
-    """
-    # ── 规则检查（0 token）───────────────────────────────────────────────
+    """日报质量评估"""
     score = 10.0
     issues: list[str] = []
 
-    # 1. 字数检查（太短说明内容不足，太长说明没有压缩）
     length = len(briefing.strip())
     if length < 100:
         score -= 3.0
-        issues.append("内容过短（不足100字），缺乏实质内容")
+        issues.append("内容过短（不足100字）")
     elif length > 3000:
         score -= 1.0
-        issues.append("内容过长（超过3000字），建议精简")
+        issues.append("内容过长（超过3000字）")
 
-    # 2. 结构检查：若有邮件数据，简报应包含邮件相关关键词
     if context.get("email_count", 0) > 0:
         email_keywords = ("邮件", "邮", "mail", "收件", "发件", "回复")
         if not any(kw in briefing for kw in email_keywords):
             score -= 1.5
             issues.append("有邮件数据但简报未提及邮件内容")
 
-    # 3. 结构检查：若有论文数据，简报应包含学术相关词
-    if context.get("new_papers", "") and context["new_papers"] != "暂无":
-        paper_keywords = ("论文", "研究", "paper", "文献", "期刊", "arXiv", "RSS")
-        if not any(kw in briefing for kw in paper_keywords):
-            score -= 1.0
-            issues.append("有新论文数据但简报未提及学术动态")
-
-    # 4. 占位符/模板残留检查
-    placeholders = ("{", "TODO", "待补充", "PLACEHOLDER", "{{")
+    placeholders = ("{", "TODO", "待补充", "PLACEHOLDER")
     if any(p in briefing for p in placeholders):
         score -= 2.0
         issues.append("简报包含未填充的模板占位符")
 
-    # 5. 重复内容检查（连续相同段落）
-    paras = [p.strip() for p in briefing.split("\n\n") if p.strip()]
-    if len(paras) != len(set(paras)):
-        score -= 1.0
-        issues.append("简报存在重复段落")
-
     score = max(1.0, score)
     rule_feedback = "；".join(issues) if issues else ""
 
-    # 规则分足够高（≥7）时直接返回，不浪费 AI token
     if score >= 7.0:
         return score, rule_feedback
 
-    # ── 规则分低时，用轻量 AI prompt 补充具体建议 ──────────────────────
     try:
         prompt = (
             f"日报问题：{rule_feedback}\n\n"
             f"日报（前500字）：\n{briefing[:500]}\n\n"
-            "请用一句话给出最重要的改进建议。只输出建议文字，不要JSON。"
+            "请用一句话给出最重要的改进建议。只输出建议文字。"
         )
         ai_feedback = chat(
             messages=[{"role": "user", "content": prompt}],

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aegis 登录</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .login-container {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 16px;
+    padding: 48px 40px;
+    width: 400px;
+    max-width: 90%;
+  }
+  .login-title {
+    font-size: 28px;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  .login-subtitle {
+    text-align: center;
+    color: #8b949e;
+    font-size: 14px;
+    margin-bottom: 32px;
+  }
+  .form-group {
+    margin-bottom: 20px;
+  }
+  .form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #8b949e;
+  }
+  .form-group input {
+    width: 100%;
+    padding: 10px 14px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    color: #e6edf3;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .form-group input:focus {
+    border-color: #58a6ff;
+  }
+  .btn {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .btn-primary {
+    background: #58a6ff;
+    color: white;
+  }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn-primary:disabled { opacity: 0.5; cursor: default; }
+  .btn-secondary {
+    background: transparent;
+    color: #58a6ff;
+    border: 1px solid #58a6ff;
+    margin-top: 10px;
+  }
+  .btn-secondary:hover { background: rgba(88,166,255,0.1); }
+  .error-msg {
+    color: #f85149;
+    font-size: 13px;
+    margin-top: 8px;
+    text-align: center;
+    min-height: 20px;
+  }
+  .success-msg {
+    color: #3fb950;
+    font-size: 13px;
+    margin-top: 8px;
+    text-align: center;
+    min-height: 20px;
+  }
+  .toggle-link {
+    text-align: center;
+    margin-top: 16px;
+    font-size: 13px;
+    color: #8b949e;
+  }
+  .toggle-link a {
+    color: #58a6ff;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .toggle-link a:hover { text-decoration: underline; }
+  .logo {
+    text-align: center;
+    font-size: 48px;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+
+<div class="login-container">
+  <div class="logo">🤖</div>
+  <div class="login-title">Aegis</div>
+  <div class="login-subtitle">你的个人数字分身</div>
+
+  <div id="login-form">
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="username" placeholder="请输入用户名" autofocus>
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="password" placeholder="请输入密码" onkeydown="if(event.key==='Enter')login()">
+    </div>
+    <button class="btn btn-primary" id="login-btn" onclick="login()">登 录</button>
+    <div class="error-msg" id="login-error"></div>
+    <div class="toggle-link">
+      还没有账号？<a onclick="showRegister()">立即注册</a>
+    </div>
+  </div>
+
+  <div id="register-form" style="display:none;">
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="reg-username" placeholder="至少3个字符">
+    </div>
+    <div class="form-group">
+      <label>显示名</label>
+      <input type="text" id="reg-display-name" placeholder="你的名字（可选）">
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="reg-password" placeholder="至少6个字符">
+    </div>
+    <div class="form-group">
+      <label>确认密码</label>
+      <input type="password" id="reg-password2" placeholder="再次输入密码">
+    </div>
+    <button class="btn btn-primary" onclick="register()">注 册</button>
+    <div class="error-msg" id="register-error"></div>
+    <div class="toggle-link">
+      已有账号？<a onclick="showLogin()">返回登录</a>
+    </div>
+  </div>
+</div>
+
+<script>
+function showRegister() {
+  document.getElementById('login-form').style.display = 'none';
+  document.getElementById('register-form').style.display = 'block';
+  document.getElementById('login-error').textContent = '';
+  document.getElementById('register-error').textContent = '';
+}
+
+function showLogin() {
+  document.getElementById('login-form').style.display = 'block';
+  document.getElementById('register-form').style.display = 'none';
+  document.getElementById('login-error').textContent = '';
+  document.getElementById('register-error').textContent = '';
+}
+
+async function login() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const btn = document.getElementById('login-btn');
+  const error = document.getElementById('login-error');
+
+  if (!username || !password) {
+    error.textContent = '请输入用户名和密码';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+  error.textContent = '';
+
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      error.style.color = '#3fb950';
+      error.textContent = '✅ 登录成功，跳转中...';
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 500);
+    } else {
+      error.style.color = '#f85149';
+      error.textContent = '❌ ' + data.message;
+    }
+  } catch (e) {
+    error.textContent = '❌ 网络错误: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '登 录';
+  }
+}
+
+async function register() {
+  const username = document.getElementById('reg-username').value.trim();
+  const display_name = document.getElementById('reg-display-name').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
+  const error = document.getElementById('register-error');
+
+  if (!username || username.length < 3) {
+    error.textContent = '用户名至少3个字符';
+    return;
+  }
+  if (!password || password.length < 6) {
+    error.textContent = '密码至少6个字符';
+    return;
+  }
+  if (password !== password2) {
+    error.textContent = '两次密码输入不一致';
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, display_name })
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      error.style.color = '#3fb950';
+      error.textContent = '✅ 注册成功！请登录';
+      setTimeout(() => {
+        showLogin();
+        document.getElementById('username').value = username;
+        document.getElementById('password').focus();
+      }, 1000);
+    } else {
+      error.style.color = '#f85149';
+      error.textContent = '❌ ' + data.message;
+    }
+  } catch (e) {
+    error.textContent = '❌ 网络错误: ' + e.message;
+  }
+}
+
+// Enter 键触发登录
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    const loginForm = document.getElementById('login-form');
+    if (loginForm.style.display !== 'none') {
+      login();
+    }
+  }
+});
+</script>
+</body>
+</html>

@@ -8,19 +8,22 @@ import json  # 确保有这一行
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime
+import config
 
 
 class FileCleaner:
     def __init__(self):
-        # 文件仓库根目录
-        self.base_dir = Path("C:/Users/hp/Desktop/upload")
+        # 从 config 读取，不再硬编码
+        self.base_dir = config.UPLOAD_DIR
     
     def list_available_files(self) -> List[str]:
         """列出所有可清洗的文件"""
         files = []
+        # 确保目录存在
+        if not self.base_dir.exists():
+            return []
         for ext in ['*.txt', '*.md', '*.csv', '*.json', '*.xml']:
             files.extend(self.base_dir.rglob(ext))
-        # 排除目录
         files = [f for f in files if f.is_file()]
         return [str(f.relative_to(self.base_dir)) for f in files]
     

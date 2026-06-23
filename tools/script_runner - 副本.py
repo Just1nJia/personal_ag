@@ -8,20 +8,28 @@ import os
 import re
 from pathlib import Path
 from typing import Dict, Optional, Tuple
-import config
 
 class ScriptRunner:
     def __init__(self):
-        # 从 config 读取
-        self.scripts_dir = config.SCRIPTS_DIR
+        # 脚本目录
+        self.scripts_dir = Path("C:/Users/hp/Desktop/upload/scripts")
         self.scripts_dir.mkdir(parents=True, exist_ok=True)
         print(f"[ScriptRunner] 脚本目录: {self.scripts_dir.absolute()}")
     
     def find_script(self, script_name: str) -> Optional[Path]:
-        # ... 内部搜索路径改为使用 self.scripts_dir
+        """查找脚本文件"""
+        # 清理脚本名
+        script_name = script_name.strip()
+        
+        print(f"[ScriptRunner] 查找脚本: {script_name}")
+        
+        # 定义搜索目录
+        upload_dir = Path("C:/Users/hp/Desktop/upload")
         search_dirs = [
             self.scripts_dir,
-            config.UPLOAD_DIR,  # 也搜索 upload 根目录
+            upload_dir,
+            self.scripts_dir.resolve(),
+            upload_dir.resolve(),
         ]
         
         # 去重

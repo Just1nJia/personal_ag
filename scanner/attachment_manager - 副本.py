@@ -30,7 +30,7 @@ from pathlib import Path
 import config
 
 # ── 路径 ──────────────────────────────────────────────────────────────────────
-ATTACH_ROOT = config.DATA_DIR / "attachments"
+ATTACH_ROOT  = config.DATA_DIR / "attachments"
 PROJECTS_DIR = ATTACH_ROOT / "projects"
 SYSTEM_DIRS  = {
     "_contracts": ["合同", "协议", "contract", "agreement", "nda"],

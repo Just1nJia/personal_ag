@@ -1,5 +1,5 @@
 """
-爬虫命令处理模块
+爬虫命令处理模块 - 支持多用户数据隔离
 """
 import asyncio
 from datetime import datetime, time, timedelta
@@ -15,25 +15,63 @@ from email_module.sender import send_email
 from tools.scraper_logger import scraper_logger
 from tools.content_processor import process_content
 from tools.smart_searcher import smart_searcher
+from web.logger import log_crawler, log_error
+import config
 
-# 定时任务存储文件
-SCHEDULE_FILE = Path("C:/Users/hp/Desktop/upload/scrape/schedules.json")
+
+# ============================================================
+# 多用户隔离：获取当前用户的爬虫目录
+# ============================================================
+
+def get_user_scrape_dir() -> Path:
+    """获取当前用户的爬虫目录"""
+    import config as config_module
+    
+    # 获取当前登录用户
+    username = config_module.get_current_user() if hasattr(config_module, 'get_current_user') else None
+    
+    # 如果用户已登录且不是匿名用户，使用用户目录
+    if username and username != "anonymous" and username != "admin":
+        try:
+            from web.user_manager import get_user_dir
+            user_scrape_dir = get_user_dir(username) / "scrape"
+            user_scrape_dir.mkdir(parents=True, exist_ok=True)
+            return user_scrape_dir
+        except Exception as e:
+            print(f"[Scraper] 获取用户目录失败: {e}")
+    
+    # 未登录或获取失败，使用默认目录
+    return config.SCRAPE_DIR
+
+
+def get_schedule_file() -> Path:
+    """获取当前用户的调度文件路径"""
+    return get_user_scrape_dir() / "schedules.json"
+
+
+# ============================================================
+# 定时任务操作（用户隔离）
+# ============================================================
 
 def load_schedules() -> list:
-    """加载定时任务"""
-    if SCHEDULE_FILE.exists():
+    """加载当前用户的定时任务"""
+    schedule_file = get_schedule_file()
+    if schedule_file.exists():
         try:
-            with open(SCHEDULE_FILE, 'r', encoding='utf-8') as f:
+            with open(schedule_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return []
     return []
 
+
 def save_schedules(schedules: list):
-    """保存定时任务"""
-    SCHEDULE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SCHEDULE_FILE, 'w', encoding='utf-8') as f:
+    """保存当前用户的定时任务"""
+    schedule_file = get_schedule_file()
+    schedule_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(schedule_file, 'w', encoding='utf-8') as f:
         json.dump(schedules, f, ensure_ascii=False, indent=2)
+
 
 def get_next_run_time(schedule_type: str, schedule_detail: str, schedule_time: str) -> str:
     """计算下次运行时间"""
@@ -76,6 +114,10 @@ def get_next_run_time(schedule_type: str, schedule_detail: str, schedule_time: s
     return next_run.isoformat()
 
 
+# ============================================================
+# 爬取函数
+# ============================================================
+
 async def scrape_single_url(
     url: str, 
     output_format: str, 
@@ -99,6 +141,9 @@ async def scrape_single_url(
     if need_process and process_requirement:
         print(f"[Scraper] 整理要求: {process_requirement[:100]}...")
     
+    # 记录爬虫开始日志
+    log_crawler("system", f"开始爬取: {url}")
+    
     result = await scraper.scrape_article(url)
     
     if not result["success"]:
@@ -114,6 +159,7 @@ async def scrape_single_url(
             is_smart=is_smart,
             smart_query=smart_query
         )
+        log_crawler("system", f"爬取失败: {url} | {result.get('message', '未知错误')}")
         return {
             "success": False,
             "url": url,
@@ -149,8 +195,10 @@ async def scrape_single_url(
         output = scraper.format_as_markdown(result, custom_content=processed_content)
         ext = "md"
     
-    # 保存文件
-    save_dir = Path("C:/Users/hp/Desktop/upload/scrape")
+    # ============================================================
+    # 保存文件：使用当前用户的爬虫目录（用户隔离）
+    # ============================================================
+    save_dir = get_user_scrape_dir()
     save_dir.mkdir(parents=True, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -207,6 +255,9 @@ async def scrape_single_url(
         smart_query=smart_query
     )
     
+    # 记录爬虫完成日志
+    log_crawler("system", f"爬取完成: {url} → {filepath.name} ({result_data['content_length']} 字符)")
+    
     return {
         "success": True,
         "url": url,
@@ -236,6 +287,8 @@ async def scrape_multiple_urls(
     results = []
     all_output = ""
     
+    log_crawler("system", f"开始批量爬取: {len(urls)} 个网址")
+    
     for i, url in enumerate(urls, 1):
         result = await scrape_single_url(url, output_format, None, need_process, process_requirement)
         results.append(result)
@@ -245,7 +298,10 @@ async def scrape_multiple_urls(
         else:
             all_output += f"爬取失败: {result.get('error', '未知错误')}\n"
     
-    save_dir = Path("C:/Users/hp/Desktop/upload/scrape")
+    # ============================================================
+    # 保存文件：使用当前用户的爬虫目录（用户隔离）
+    # ============================================================
+    save_dir = get_user_scrape_dir()
     save_dir.mkdir(parents=True, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -285,6 +341,8 @@ async def scrape_multiple_urls(
         process_requirement=process_requirement
     )
     
+    log_crawler("system", f"批量爬取完成: {len(urls)} 个网址, 成功 {sum(1 for r in results if r['success'])} 个")
+    
     return {
         "success": True,
         "message": f"批量爬取完成，共 {len(urls)} 个网址",
@@ -311,6 +369,9 @@ async def search_and_scrape(
     根据需求搜索并抓取相关内容
     """
     from tools.smart_searcher import smart_searcher
+    
+    # 记录智能搜索日志
+    log_crawler("system", f"智能搜索开始: {query}")
     
     # 记录智能搜索日志到控制台
     print(f"\n{'='*60}")
@@ -372,6 +433,7 @@ async def search_and_scrape(
         search_results = suggested_urls
     
     if not search_results:
+        log_crawler("system", f"智能搜索未找到结果: {query}")
         return {
             "success": False,
             "message": f"未找到与 '{query}' 相关的网址",
@@ -393,6 +455,7 @@ async def search_and_scrape(
     target_urls = valid_urls[:max_urls]
     
     print(f"[SmartSearch] 找到 {len(valid_urls)} 个相关网址，将抓取前 {len(target_urls)} 个")
+    log_crawler("system", f"智能搜索找到 {len(valid_urls)} 个网址，将抓取 {len(target_urls)} 个")
     
     # 4. 抓取每个网址的内容
     results = []
@@ -427,8 +490,8 @@ async def search_and_scrape(
         else:
             all_output += f"抓取失败: {result.get('error', '未知错误')}\n"
     
-    # 5. 保存合并文件
-    save_dir = Path("C:/Users/hp/Desktop/upload/scrape")
+    # 5. 保存合并文件（使用当前用户的爬虫目录，用户隔离）
+    save_dir = get_user_scrape_dir()
     save_dir.mkdir(parents=True, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -451,6 +514,7 @@ async def search_and_scrape(
         )
     
     print(f"[SmartSearch] 智能搜索完成，共抓取 {len(target_urls)} 个网址")
+    log_crawler("system", f"智能搜索完成: {query} → {filepath.name} ({len(target_urls)} 个网址)")
     
     return {
         "success": True,
@@ -547,6 +611,10 @@ async def execute_scrape_task(
         return await scrape_multiple_urls(urls, output_format, send_to_email, need_process, process_requirement)
 
 
+# ============================================================
+# 定时任务管理（用户隔离）
+# ============================================================
+
 def add_scheduled_task(
     urls: str = None,
     schedule_type: str = None,
@@ -606,6 +674,9 @@ def add_scheduled_task(
     else:
         msg = f"定时任务已设定，将在{desc}执行"
     
+    # 记录定时任务日志
+    log_crawler("system", f"添加定时任务: {display_text[:50]}... {desc}")
+    
     return {
         "success": True, 
         "task": task, 
@@ -627,7 +698,7 @@ def get_schedule_desc(schedule_type: str, schedule_detail: str, schedule_time: s
 
 
 def get_scheduled_tasks() -> list:
-    """获取所有定时任务"""
+    """获取当前用户的定时任务"""
     return load_schedules()
 
 
@@ -636,6 +707,7 @@ def remove_scheduled_task(task_id: str) -> Dict:
     schedules = load_schedules()
     schedules = [t for t in schedules if t.get("id") != task_id]
     save_schedules(schedules)
+    log_crawler("system", f"删除定时任务: {task_id}")
     return {"success": True, "message": "定时任务已删除"}
 
 
@@ -672,6 +744,7 @@ def run_async_task(
         return result
     except Exception as e:
         print(f"[Scheduler] 任务执行失败: {e}")
+        log_error("system", f"定时任务执行失败", e)
         return None
     finally:
         try:
@@ -710,6 +783,7 @@ def check_and_execute_scheduled_tasks():
             process_requirement = task.get("process_requirement", "")
             
             print(f"[Scheduler] 执行定时任务: {task.get('urls', '未知')} (预定时间: {next_run_time})")
+            log_crawler("system", f"执行定时任务: {task.get('urls', '未知')[:50]}...")
             
             if need_process and process_requirement:
                 print(f"[Scheduler] 启用 AI 内容整理，要求: {process_requirement[:100]}...")
@@ -772,6 +846,7 @@ def start_scheduler():
                 check_and_execute_scheduled_tasks()
             except Exception as e:
                 print(f"[Scheduler] 调度器错误: {e}")
+                log_error("system", f"调度器错误", e)
             time.sleep(60)
     
     thread = threading.Thread(target=scheduler_loop, daemon=True)

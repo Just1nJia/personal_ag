@@ -8,16 +8,9 @@ DATA_DIR.mkdir(exist_ok=True)
 
 # ── 统一配置中心 ──────────────────────────────────────────────────────────
 
-# 默认配置路径（未登录时使用）
-DEFAULT_CONFIG_FILE = DATA_DIR / "credential.json"
+CONFIG_FILE = DATA_DIR / "credential.json"
 
-# 当前用户配置路径（登录后动态设置）
-CONFIG_FILE = DEFAULT_CONFIG_FILE
-
-# 当前登录用户
-CURRENT_USER = None
-
-# 默认配置模板
+# 默认配置模板（修复：加上 API 默认值）
 DEFAULT_CONFIG = {
     "user": {
         "owner_name": "用户",
@@ -50,7 +43,7 @@ DEFAULT_CONFIG = {
         "display_name": "Aegis"
     },
     "file": {
-        "upload_dir": "C:/Users/hp/Desktop"
+        "upload_dir": "C:/Users/hp/Desktop/upload"
     }
 }
 
@@ -118,7 +111,6 @@ def get_config(key: str, default=None):
     
     return value
 
-
 def _get_from_credentials(key: str):
     """从 .credentials 文件读取配置"""
     cred_file = BASE_DIR / ".credentials"
@@ -137,7 +129,6 @@ def _get_from_credentials(key: str):
     except Exception:
         pass
     return None
-
 
 def set_config(key: str, value):
     """设置并保存配置到 credential.json"""
@@ -171,7 +162,7 @@ def update_config(payload: dict) -> dict:
             updated.append(key)
     
     _save_config(_config)
-    _reload_globals()
+    _reload_globals()  # ← 这个函数应该更新 UPLOAD_DIR
     return {
         "success": True,
         "message": f"已更新 {len(updated)} 项配置",
@@ -211,7 +202,7 @@ OWNER_EN_NAME    = get_config("user.owner_en_name", "")
 AEGIS_WXID       = get_config("wechat.wxid", "")
 AEGIS_DISPLAY_NAME = get_config("wechat.display_name", "Aegis")
 
-# API 配置
+# API 配置（修复：get_config 会正确处理空字符串返回默认值）
 VOLC_API_KEY     = get_config("api.volc_api_key", "")
 VOLC_API_BASE    = get_config("api.volc_api_base", "http://10.60.2.31/ai-gateway/szzx_openclaw/qianwen")
 VOLC_MODEL       = get_config("api.volc_model", "Qwen2.5-32B-Instruct")
@@ -269,7 +260,6 @@ def _reload_globals():
     global UPLOAD_DIR, SCRIPTS_DIR, SCRAPE_DIR
     global DB_PATH, PROFILE_PATH, FILE_INDEX_PATH, CHROMA_PATH
     global MEMORY_DIR, LOGS_DIR, FTS_DB_PATH
-    global CONFIG_FILE
 
     # 重新从文件加载 _config
     global _config
@@ -299,14 +289,16 @@ def _reload_globals():
     GMAIL_SMTP_HOST  = _config.get("email_gmail", {}).get("smtp_host", "smtp.gmail.com")
     GMAIL_SMTP_PORT  = int(_config.get("email_gmail", {}).get("smtp_port", 465))
 
+    # ============================================================
     # 关键修复：直接从 _config 读取 file.upload_dir
+    # ============================================================
     file_config = _config.get("file", {})
     upload_dir_str = file_config.get("upload_dir", "")
     if upload_dir_str and upload_dir_str != "":
         UPLOAD_DIR = Path(upload_dir_str)
     else:
         # 如果配置为空，使用默认值
-        UPLOAD_DIR = Path("C:/Users/hp/Desktop")
+        UPLOAD_DIR = Path("C:/Users/hp/Desktop/upload")
     
     SCRIPTS_DIR = UPLOAD_DIR / "scripts"
     SCRAPE_DIR = UPLOAD_DIR / "scrape"
@@ -329,52 +321,6 @@ def _reload_globals():
 
 
 # ============================================================
-# 多用户支持
-# ============================================================
-
-def set_current_user(username: str):
-    """设置当前登录用户"""
-    global CURRENT_USER, CONFIG_FILE, _config
-    
-    CURRENT_USER = username
-    
-    # 获取用户配置路径
-    from web.user_manager import get_user_config_path
-    user_config_path = get_user_config_path(username)
-    
-    # 如果用户配置文件存在，使用它；否则使用默认配置
-    if user_config_path.exists():
-        CONFIG_FILE = user_config_path
-    else:
-        # 用户首次登录，复制默认配置到用户目录
-        CONFIG_FILE = user_config_path
-        _save_config(DEFAULT_CONFIG)
-        print(f"[Config] 为用户 {username} 创建配置文件: {CONFIG_FILE}")
-    
-    # 重新加载配置
-    _config = _load_config()
-    _reload_globals()
-    
-    print(f"[Config] 切换到用户: {username}，配置: {CONFIG_FILE}")
-
-
-def get_current_user() -> str:
-    """获取当前登录用户"""
-    return CURRENT_USER or "admin"
-
-
-def is_logged_in() -> bool:
-    """检查是否已登录"""
-    return CURRENT_USER is not None
-
-
-def get_user_config_path(username: str) -> Path:
-    """获取用户的 credential.json 路径"""
-    from web.user_manager import get_user_dir
-    return get_user_dir(username) / "credential.json"
-
-
-# ============================================================
 # 导出函数（供 Web API 使用）
 # ============================================================
 
@@ -390,10 +336,11 @@ def get_config_for_web() -> dict:
             "scrape_dir": str(SCRAPE_DIR)
         }
     
-    # 如果 upload 字段不存在，从 file 复制
+    # 如果 upload 字段不存在，从 file 复制（而不是覆盖）
     if "upload" not in config_data:
         config_data["upload"] = config_data["file"].copy()
     else:
+        # 如果 upload 存在但为空，从 file 更新
         if not config_data["upload"].get("upload_dir"):
             config_data["upload"] = config_data["file"].copy()
     
@@ -448,29 +395,3 @@ def get(key: str, default=None):
 print(f"[Config] 已加载配置: {CONFIG_FILE}")
 print(f"[Config] API Base URL: {VOLC_API_BASE}")
 print(f"[Config] API Key 已配置: {'是' if VOLC_API_KEY else '否（请设置）'}")
-
-def set_current_user_from_session(username: str):
-    """从 Session 设置当前用户"""
-    global CURRENT_USER, CONFIG_FILE, _config
-    
-    if not username:
-        CURRENT_USER = None
-        return
-    
-    CURRENT_USER = username
-    
-    # 获取用户配置路径
-    from web.user_manager import get_user_config_path
-    user_config_path = get_user_config_path(username)
-    
-    if user_config_path.exists():
-        CONFIG_FILE = user_config_path
-    else:
-        CONFIG_FILE = user_config_path
-        _save_config(DEFAULT_CONFIG)
-        print(f"[Config] 为用户 {username} 创建配置文件: {CONFIG_FILE}")
-    
-    _config = _load_config()
-    _reload_globals()
-    
-    print(f"[Config] 切换到用户: {username}，配置: {CONFIG_FILE}")
